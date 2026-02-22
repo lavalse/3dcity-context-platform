@@ -1,0 +1,16 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "3DCityDB (Taito-ku)",
+      "Group": "Servers",
+      "Host": "3dcitydb-pg",
+      "Port": 5432,
+      "MaintenanceDB": "citydb",
+      "Username": "citydb",
+      "Password": "citydb",
+      "SSLMode": "prefer",
+      "PassFile": "",
+      "ConnectionParameters": {}
+    }
+  }
+}
