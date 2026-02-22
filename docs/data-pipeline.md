@@ -95,30 +95,32 @@ docker compose up -d db
 docker compose up -d
 ```
 
-## Current Data State (as of 2026-02-22)
+## Current Data State (as of 2026-02-22) — v0.2.0
 
 ### Imported ✓
-- **bldg** (buildings): 72,486 buildings, LOD1 + LOD2 with textures
-  - Height: populated (median 10.3m, -9999 = no measurement)
-  - Floors: populated (`storeys_above_ground`)
-  - Function/year: stored as generic attributes (ADE namespace) — see known issues
 
-### Not yet imported
-- tran (roads)
-- luse (land use)
-- urf (urban planning zones)
-- fld (flood hazard zones)
-- brid, frn, veg (secondary)
+| Feature | DB classname | Count | Notes |
+|---|---|---|---|
+| Buildings (bldg) | Building | 72,486 | LOD1+LOD2 with textures |
+| Building surfaces | BuildingWallSurface etc. | 638,485 | Wall, roof, ground |
+| Roads (tran) | Road | 22,172 | + 25,769 TrafficArea |
+| Land use (luse) | LandUse | 188,273 | Full ward coverage |
+| Flood zones (fld) | WaterBody | 1,740 | 3 river watersheds |
 
-### Known Issues
-1. **`bldg:function` and `year_of_construction` are NULL** in the `building` table.
-   PLATEAU stores these in the `uro:` ADE namespace. The importer may store them
-   as generic attributes under different names. Run this to check:
-   ```sql
-   SELECT attrname, strval, intval
-   FROM citydb.cityobject_genericattrib
-   WHERE cityobject_id = (SELECT id FROM citydb.building LIMIT 1);
-   ```
+### Not imported / dropped
 
-2. **Height sentinel value**: `-9999` means "height measurement failed". Always filter
-   with `WHERE measured_height > 0` for height analysis queries.
+| Feature | Reason |
+|---|---|
+| Urban planning zones (urf) | PLATEAU ADE type — standard importer drops these (0 records) |
+| uro: ADE attributes | buildingStructureType, detailedUsage, fireproofStructureType, floodRisk — dropped by importer |
+| brid, frn, veg | Not yet imported (secondary priority) |
+
+### Known Attribute Issues
+
+1. **PLATEAU uses `bldg:usage` not `bldg:function`** — `building.usage` is populated (all 72,486 buildings). `building.function` is always NULL. See `docs/query-examples.md` for the correct usage codelist.
+
+2. **`year_of_construction` not in this survey** — NULL for all buildings. Taito-ku 2024 PLATEAU data does not include construction year.
+
+3. **Sentinel values**: `-9999` for height means no measurement; `9999` for floors means unknown. Always filter these out in queries.
+
+4. **Flood zones as WaterBody**: The `fld` data imported as `WaterBody` objects (standard 3DCityDB type). Queryable via `classname = 'WaterBody'`.
