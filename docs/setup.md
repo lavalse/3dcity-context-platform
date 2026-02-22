@@ -1,6 +1,32 @@
 # Setup Guide
 
-## Prerequisites
+## Resuming After a Break
+
+If you have already completed the initial setup and just want to continue working:
+
+```bash
+cd /home/red/projects/3dcity-context-platform
+docker compose up -d
+```
+
+That's it. The database data is persisted in a Docker volume and survives restarts. Check everything is running:
+
+```bash
+curl http://localhost:3000/api/health
+# Expected: {"status":"ok","db":"connected","llm_mode":"claude_api"}
+```
+
+Then open **http://localhost:3000** in the browser.
+
+If the backend shows `"llm_mode":"placeholder"` after resuming, your `ANTHROPIC_API_KEY` in `.env` may have been cleared — re-add it and run:
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+---
+
+## Prerequisites (First-Time Setup Only)
 
 - Docker Desktop (or Docker Engine + Compose plugin)
 - 10+ GB free disk space (CityGML data + PostgreSQL)
