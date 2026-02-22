@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台東区 3D都市モデル 問い合わせシステム</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a3a5c;
+      color: white;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    header p  { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
+    .mode-badge {
+      margin-left: auto;
+      font-size: 0.72rem;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-weight: 500;
+      background: rgba(255,255,255,0.15);
+    }
+    .mode-badge.llm       { background: #22c55e33; color: #86efac; }
+    .mode-badge.placeholder { background: #f59e0b33; color: #fcd34d; }
+
+    /* ── Main layout ── */
+    main { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── Query section ── */
+    .query-card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .query-card label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .input-row {
+      display: flex;
+      gap: 10px;
+    }
+    .input-row input {
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 1rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+    .input-row input:focus { border-color: #1a3a5c; }
+    .input-row button {
+      padding: 12px 24px;
+      background: #1a3a5c;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    .input-row button:hover { background: #2563a8; }
+    .input-row button:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    /* ── Example questions ── */
+    .examples {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .examples span {
+      font-size: 0.75rem;
+      color: #64748b;
+      align-self: center;
+    }
+    .example-chip {
+      font-size: 0.78rem;
+      padding: 5px 12px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      cursor: pointer;
+      color: #334155;
+      transition: all 0.15s;
+    }
+    .example-chip:hover {
+      background: #dbeafe;
+      border-color: #93c5fd;
+      color: #1d4ed8;
+    }
+
+    /* ── Results area ── */
+    .results { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    /* ── SQL box ── */
+    .sql-card {
+      background: #0f172a;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .sql-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: #1e293b;
+    }
+    .sql-card-header span {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .sql-explanation {
+      font-size: 0.78rem;
+      color: #64748b;
+      font-style: italic;
+    }
+    .copy-btn {
+      background: none;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: #334155; color: white; }
+    pre#sql-display {
+      padding: 16px;
+      color: #e2e8f0;
+      font-family: "Cascadia Code", "Fira Code", "Courier New", monospace;
+      font-size: 0.85rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    /* ── Results table ── */
+    .table-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+    .table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      background: #fafafa;
+    }
+    .table-header span { font-size: 0.82rem; font-weight: 600; color: #475569; }
+    .row-count {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      background: #e0f2fe;
+      color: #0369a1;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #f8fafc; }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    td {
+      padding: 9px 14px;
+      font-size: 0.88rem;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8fafc; }
+    td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* ── Error ── */
+    .error-card {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      padding: 14px 18px;
+      color: #dc2626;
+      font-size: 0.88rem;
+    }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+    .spinner::before {
+      content: "";
+      width: 20px; height: 20px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #1a3a5c;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: #94a3b8;
+    }
+    .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
+    .empty-state p { font-size: 0.9rem; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>台東区 3D都市モデル 問い合わせシステム</h1>
+    <p>Taito-ku 3D City Model · Natural Language Query</p>
+  </div>
+  <div id="mode-badge" class="mode-badge">connecting…</div>
+</header>
+
+<main>
+  <!-- Query input -->
+  <div class="query-card">
+    <label for="question-input">質問 / Question</label>
+    <div class="input-row">
+      <input
+        id="question-input"
+        type="text"
+        placeholder="例: 台東区の住宅は何棟ありますか？ / How many residential buildings are there?"
+        autocomplete="off"
+      />
+      <button id="submit-btn" onclick="submitQuery()">検索 / Search</button>
+    </div>
+
+    <div class="examples">
+      <span>例：</span>
+      <div class="example-chip" onclick="ask(this)">How many residential buildings?</div>
+      <div class="example-chip" onclick="ask(this)">Building count by usage type</div>
+      <div class="example-chip" onclick="ask(this)">Top 10 tallest buildings</div>
+      <div class="example-chip" onclick="ask(this)">Height distribution</div>
+      <div class="example-chip" onclick="ask(this)">Buildings near flood zone</div>
+      <div class="example-chip" onclick="ask(this)">How many public facilities?</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="results" id="results">
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803a7.5 7.5 0 0010.607 0z"/>
+      </svg>
+      <p>質問を入力して検索してください</p>
+    </div>
+  </div>
+</main>
+
+<script>
+  const API = '/api';
+
+  // ── Check health on load ──
+  async function checkHealth() {
+    try {
+      const res = await fetch(`${API}/health`);
+      const data = await res.json();
+      const badge = document.getElementById('mode-badge');
+      if (data.db === 'connected') {
+        if (data.llm_mode === 'claude_api') {
+          badge.textContent = '🟢 Claude API';
+          badge.className = 'mode-badge llm';
+        } else {
+          badge.textContent = '🟡 Placeholder mode';
+          badge.className = 'mode-badge placeholder';
+        }
+      } else {
+        badge.textContent = '🔴 DB offline';
+      }
+    } catch {
+      document.getElementById('mode-badge').textContent = '🔴 API offline';
+    }
+  }
+
+  // ── Click example chip ──
+  function ask(el) {
+    document.getElementById('question-input').value = el.textContent;
+    submitQuery();
+  }
+
+  // ── Enter key support ──
+  document.getElementById('question-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitQuery();
+  });
+
+  // ── Submit ──
+  async function submitQuery() {
+    const question = document.getElementById('question-input').value.trim();
+    if (!question) return;
+
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = '検索中…';
+
+    const resultsEl = document.getElementById('results');
+    resultsEl.innerHTML = '<div class="spinner">Generating SQL and querying database…</div>';
+
+    try {
+      const res = await fetch(`${API}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, execute: true }),
+      });
+      const data = await res.json();
+      renderResults(data);
+    } catch (err) {
+      resultsEl.innerHTML = `<div class="error-card">Network error: ${err.message}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '検索 / Search';
+    }
+  }
+
+  // ── Render results ──
+  function renderResults(data) {
+    const resultsEl = document.getElementById('results');
+    resultsEl.innerHTML = '';
+
+    // SQL card
+    const sqlCard = document.createElement('div');
+    sqlCard.className = 'sql-card';
+    sqlCard.innerHTML = `
+      <div class="sql-card-header">
+        <span>Generated SQL</span>
+        <span class="sql-explanation">${escHtml(data.explanation)}</span>
+        <button class="copy-btn" onclick="copySQL()">Copy</button>
+      </div>
+      <pre id="sql-display">${escHtml(data.sql)}</pre>
+    `;
+    resultsEl.appendChild(sqlCard);
+
+    // Error card
+    if (data.error) {
+      const errCard = document.createElement('div');
+      errCard.className = 'error-card';
+      errCard.textContent = `Query error: ${data.error}`;
+      resultsEl.appendChild(errCard);
+      return;
+    }
+
+    // Results table
+    if (!data.executed) return;
+
+    const tableCard = document.createElement('div');
+    tableCard.className = 'table-card';
+
+    const header = document.createElement('div');
+    header.className = 'table-header';
+    header.innerHTML = `
+      <span>Results</span>
+      <span class="row-count">${data.row_count.toLocaleString()} row${data.row_count !== 1 ? 's' : ''}</span>
+    `;
+    tableCard.appendChild(header);
+
+    if (data.row_count === 0) {
+      tableCard.innerHTML += '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:0.88rem;">No results found.</div>';
+    } else {
+      const scroll = document.createElement('div');
+      scroll.className = 'table-scroll';
+
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const hrow = document.createElement('tr');
+      data.columns.forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hrow.appendChild(th);
+      });
+      thead.appendChild(hrow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      data.rows.forEach(row => {
+        const tr = document.createElement('tr');
+        row.forEach(cell => {
+          const td = document.createElement('td');
+          td.textContent = cell === null ? '—' : cell;
+          if (typeof cell === 'number') td.className = 'numeric';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      scroll.appendChild(table);
+      tableCard.appendChild(scroll);
+    }
+
+    resultsEl.appendChild(tableCard);
+  }
+
+  // ── Helpers ──
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function copySQL() {
+    const sql = document.getElementById('sql-display')?.textContent;
+    if (sql) navigator.clipboard.writeText(sql).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
+  }
+
+  checkHealth();
+</script>
+</body>
+</html>
