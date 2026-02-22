@@ -46,51 +46,52 @@ Use the PLATEAU MCP tools or API to get direct file URLs for specific feature ty
 
 ## Building Data (bldg) — Key Attributes
 
-### Standard CityGML bldg: attributes
+### Standard CityGML bldg: attributes (verified in Taito-ku 2024)
 
-| Attribute | Storage in 3DCityDB v4 | Description |
+| Attribute | DB Column | In DB? | Notes |
+|---|---|---|---|
+| `bldg:measuredHeight` | `building.measured_height` | **Yes** | -9999 = no measurement; filter `> 0` |
+| `bldg:storeysAboveGround` | `building.storeys_above_ground` | **Yes** | 9999 = unknown |
+| `bldg:storeysBelowGround` | `building.storeys_below_ground` | Yes | 9999 = unknown |
+| `bldg:usage` | `building.usage` | **Yes** | Main use type — see codelist below |
+| `bldg:class` | `building.class` | Yes | All = 3001 in this dataset |
+| `bldg:function` | `building.function` | No | PLATEAU uses `bldg:usage` instead |
+| `bldg:yearOfConstruction` | `building.year_of_construction` | No | Not in Taito-ku 2024 survey |
+
+### PLATEAU uro: ADE attributes (in GML but dropped by importer)
+
+These attributes exist in the CityGML source files but the standard 3DCityDB importer
+does not have the PLATEAU `uro:` ADE schema loaded, so they are not stored in the DB.
+Fixing this requires a PLATEAU-specific import configuration.
+
+| Attribute | Description | Available in DB? |
 |---|---|---|
-| `bldg:measuredHeight` | `building.measured_height` | Building height in meters (aerial photogrammetry) |
-| `bldg:storeysAboveGround` | `building.storeys_above_ground` | Floors above ground |
-| `bldg:storeysBelowGround` | `building.storeys_below_ground` | Floors below ground |
-| `bldg:yearOfConstruction` | `building.year_of_construction` | Year built |
-| `bldg:yearOfDemolition` | `building.year_of_demolition` | Year demolished (if applicable) |
-| `bldg:class` | `building.class` | Building class code |
-| `bldg:function` | `building.function` | Building function (use type) — see codelist below |
-| `bldg:roofType` | `building.roof_type` | Roof type code |
+| `uro:fireproofStructureType` | Fire resistance classification | No (dropped) |
+| `uro:detailedUsage` | Detailed usage code | No (dropped) |
+| `uro:landUseType` | Land use type at building level | No (dropped) |
+| `uro:districtsAndZonesType` | Urban zone classification | No (dropped) |
+| `uro:RiverFloodingRiskAttribute` | Flood risk depth by river | No (dropped) |
+| `uro:buildingRoofEdgeArea` | Roof area (m²) | No (dropped) |
 
-### PLATEAU uro: ADE attributes (via uro:BuildingDetails)
-
-These are part of PLATEAU's Application Domain Extension for urban objects:
-
-| Attribute | Description |
-|---|---|
-| `uro:prefecture` | Prefecture code (13 = Tokyo) |
-| `uro:city` | Municipality code (13106 = Taito-ku) |
-| `uro:surveyYear` | Survey reference year |
-| `uro:buildingStructureType` | Structural type — see codelist |
-| `uro:buildingRoofEdgeArea` | Roof footprint area (m²) |
-| `uro:districtsAndZonesType` | Urban districts/zones classification |
-| `uro:orgUsage` | Original building usage from urban planning survey |
-| `uro:orgFireproofStructure` | Fire resistance/fireproof classification |
-
-### Building Function Codelist (`bldg:function`)
-
-PLATEAU uses the National Land Numerical Information building usage codes:
+### Building Usage Codelist (`bldg:usage` → `building.usage`)
 
 | Code | Japanese | English |
 |---|---|---|
-| 0401 | 専用住宅 | Detached house |
-| 0402 | 共同住宅 | Apartment / condominium |
-| 0403 | 店舗等併用住宅 | Residence with commercial use |
-| 0501 | 官公庁施設 | Government / public facility |
-| 0502 | 文教厚生施設 | Education / welfare facility |
-| 0503 | 宗教施設 | Religious facility |
-| 0504 | 医療施設 | Medical facility |
-| 0506 | 工場・倉庫等 | Factory / warehouse |
-| 0507 | 商業・業務施設 | Commercial / business facility |
-| 0508 | 運輸・通信施設 | Transport / communication facility |
-| 0510 | 農林漁業用施設 | Agriculture / fishery facility |
+| 401 | 業務施設 | Office / business |
+| 402 | 商業施設 | Commercial / retail |
+| 403 | 宿泊施設 | Accommodation |
+| 404 | 商業系複合施設 | Mixed commercial |
+| 411 | 住宅 | House / detached residence |
+| 412 | 共同住宅 | Apartment / condominium |
+| 413 | 店舗等併用住宅 | House with shop |
+| 414 | 店舗等併用共同住宅 | Apartment with shop |
+| 415 | 作業所併用住宅 | House with workshop |
+| 421 | 官公庁施設 | Government / public facility |
+| 422 | 文教厚生施設 | Education / welfare |
+| 431 | 運輸倉庫施設 | Transport / warehouse |
+| 441 | 工場 | Factory |
+| 454 | その他 | Other |
+| 461 | 不明 | Unknown |
 
 ### Building Structure Type Codelist (`uro:buildingStructureType`)
 
