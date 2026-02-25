@@ -30,7 +30,16 @@ async def query(req: QueryRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     # Step 1: generate SQL
-    gen = await generate_sql(req.question)
+    try:
+        gen = await generate_sql(req.question)
+    except Exception as e:
+        return QueryResponse(
+            question=req.question,
+            sql="",
+            explanation="",
+            mode="error",
+            error=f"SQL generation failed: {str(e)}",
+        )
 
     response = QueryResponse(
         question=req.question,
