@@ -322,6 +322,72 @@
       pointer-events: none; display: none; z-index: 5;
     }
 
+    /* Layer toggle panel */
+    #layer-panel {
+      position: absolute; bottom: 28px; left: 10px; z-index: 10;
+      background: white; border-radius: 8px; padding: 8px 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2); min-width: 170px;
+    }
+    #layer-panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.72rem; font-weight: 700; color: #475569;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;
+    }
+    .layer-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 0; cursor: pointer; font-size: 0.8rem; color: #334155;
+    }
+    .layer-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+    .layer-toggle {
+      width: 32px; height: 18px; border-radius: 9px; border: none;
+      cursor: pointer; flex-shrink: 0; transition: background 0.2s;
+      margin-left: auto; background: #e2e8f0;
+    }
+    .layer-toggle.on { background: #1a3a5c; }
+
+    /* Legend panel */
+    #legend-panel {
+      position: absolute; bottom: 28px; right: 10px; z-index: 10;
+      background: white; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      min-width: 180px; max-width: 230px;
+      display: none;
+    }
+    #legend-panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.72rem; font-weight: 700; color: #475569;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 8px 10px; cursor: default;
+    }
+    #legend-collapse-btn {
+      background: none; border: none; cursor: pointer;
+      color: #94a3b8; font-size: 1rem; line-height: 1; padding: 0 2px;
+      font-family: inherit;
+    }
+    #legend-body {
+      padding: 0 10px 8px;
+      max-height: 55vh; overflow-y: auto;
+    }
+    .legend-section-title {
+      font-size: 0.68rem; font-weight: 700; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 8px 0 4px; padding-top: 6px;
+      border-top: 1px solid #f1f5f9;
+    }
+    .legend-section-title:first-child { border-top: none; margin-top: 0; }
+    .legend-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px;
+    }
+    .legend-grid.single-col { grid-template-columns: 1fr; }
+    .legend-row {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 0.73rem; color: #334155; line-height: 1.3;
+    }
+    .legend-swatch {
+      width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0;
+      border: 1px solid rgba(0,0,0,0.12);
+    }
+
     .hidden { display: none !important; }
   </style>
 </head>
@@ -388,6 +454,16 @@
       <button class="sel-btn" onclick="clearSelection()" style="color:#dc2626">クリア</button>
     </div>
     <div id="rubber-band"></div>
+    <div id="layer-panel">
+      <div id="layer-panel-header">レイヤー / Layers</div>
+    </div>
+    <div id="legend-panel">
+      <div id="legend-panel-header">
+        凡例 / Legend
+        <button id="legend-collapse-btn" onclick="toggleLegendCollapse()" title="折りたたむ">−</button>
+      </div>
+      <div id="legend-body"></div>
+    </div>
   </div>
 
   <div id="detail-panel">
@@ -402,6 +478,72 @@
 
 <script>
 const API = '/api';
+
+// ── Layer configuration ──
+const MAP_LAYERS = [
+  { id: 'buildings',     label: '建物',     label_en: 'Buildings',   color: '#FF9800', visible: true,  sourceLayer: 'building_footprints',   clickable: 'building' },
+  { id: 'land-use',      label: '土地利用', label_en: 'Land Use',    color: '#F4A261', visible: false, sourceLayer: 'land_use_footprints',   clickable: 'feature'  },
+  { id: 'roads',         label: '道路',     label_en: 'Roads',       color: '#78909C', visible: false, sourceLayer: 'road_footprints',       clickable: 'feature'  },
+  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: true,  sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
+];
+
+// ── Land use class colors & labels (Common_landUseType v3.2) ──
+const LAND_USE_COLORS = {
+  '201': '#6BAE75',  // 田（水田）
+  '202': '#A7C957',  // 畑
+  '203': '#386641',  // 山林
+  '204': '#4CC9F0',  // 水面
+  '205': '#B7D7A8',  // その他自然地
+  '211': '#F4A261',  // 住宅用地
+  '212': '#E63946',  // 商業用地
+  '213': '#9C89B8',  // 工業用地
+  '214': '#457B9D',  // 公益施設用地
+  '215': '#ADB5BD',  // 道路用地
+  '216': '#868E96',  // 交通施設用地
+  '217': '#52B788',  // 公共空地（公園等）
+  '218': '#6C757D',  // その他公的施設用地
+  '219': '#7B9E5E',  // 農林漁業施設用地
+  '220': '#95D5B2',  // その他①（ゴルフ場）
+  '221': '#FFD166',  // その他②（太陽光発電）
+  '222': '#CED4DA',  // その他③（平面駐車場）
+  '223': '#C9A96E',  // その他④（建物跡地等）
+  '224': '#E9ECEF',  // 低未利用土地
+  '231': '#9E9E9E',  // 不明
+  '251': '#FFBA49',  // 可住地
+  '252': '#CFD8DC',  // 非可住地
+  '260': '#8DB48E',  // 農地
+  '261': '#FFB347',  // 宅地
+  '262': '#B0BEC5',  // 道路・鉄軌道敷
+  '263': '#DCEDC8',  // 空地
+};
+const LAND_USE_LABELS = {
+  '201': '田（水田）',
+  '202': '畑',
+  '203': '山林',
+  '204': '水面',
+  '205': 'その他自然地',
+  '211': '住宅用地',
+  '212': '商業用地',
+  '213': '工業用地',
+  '214': '公益施設用地',
+  '215': '道路用地',
+  '216': '交通施設用地',
+  '217': '公共空地',
+  '218': 'その他公的施設用地',
+  '219': '農林漁業施設用地',
+  '220': 'ゴルフ場',
+  '221': '太陽光発電用地',
+  '222': '平面駐車場',
+  '223': '建物跡地等',
+  '224': '低未利用土地',
+  '231': '不明',
+  '251': '可住地',
+  '252': '非可住地',
+  '260': '農地',
+  '261': '宅地',
+  '262': '道路・鉄軌道敷',
+  '263': '空地',
+};
 
 // ── Usage color map ──
 const USAGE_COLORS = {
@@ -422,6 +564,23 @@ const USAGE_COLORS = {
   '461': '#9E9E9E',
 };
 const DEFAULT_COLOR = '#FF9800';
+const USAGE_LABELS = {
+  '411': '住宅',
+  '412': '共同住宅',
+  '413': '店舗等併用住宅',
+  '414': '店舗等併用共同住宅',
+  '415': '作業所併用住宅',
+  '401': '業務施設',
+  '402': '商業施設',
+  '403': '宿泊施設',
+  '404': '商業系複合施設',
+  '421': '官公庁施設',
+  '422': '文教厚生施設',
+  '431': '運輸倉庫施設',
+  '441': '工場',
+  '454': 'その他',
+  '461': '不明',
+};
 
 // ── Tab switching ──
 let mapInitialized = false;
@@ -666,6 +825,89 @@ function initMap() {
       paint: { 'line-color': 'rgba(0,0,0,0.2)', 'line-width': 0.5 },
     });
 
+    // Land use layer (off by default)
+    map.addSource('land-use', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/land_use_footprints/{z}/{x}/{y}'],
+      minzoom: 10, maxzoom: 16,
+    });
+    map.addLayer({
+      id: 'land-use-fill', type: 'fill', source: 'land-use',
+      'source-layer': 'land_use_footprints',
+      layout: { visibility: 'none' },
+      paint: {
+        'fill-color': [
+          'match', ['get', 'class'],
+          '201', '#6BAE75',
+          '202', '#A7C957',
+          '203', '#386641',
+          '204', '#4CC9F0',
+          '205', '#B7D7A8',
+          '211', '#F4A261',
+          '212', '#E63946',
+          '213', '#9C89B8',
+          '214', '#457B9D',
+          '215', '#ADB5BD',
+          '216', '#868E96',
+          '217', '#52B788',
+          '218', '#6C757D',
+          '219', '#7B9E5E',
+          '220', '#95D5B2',
+          '221', '#FFD166',
+          '222', '#CED4DA',
+          '223', '#C9A96E',
+          '224', '#E9ECEF',
+          '231', '#9E9E9E',
+          '#CCCCCC'
+        ],
+        'fill-opacity': 0.6,
+      },
+    });
+    map.addLayer({
+      id: 'land-use-outline', type: 'line', source: 'land-use',
+      'source-layer': 'land_use_footprints',
+      layout: { visibility: 'none' },
+      paint: { 'line-color': '#388E3C', 'line-width': 0.5 },
+    });
+
+    // Roads layer (off by default)
+    map.addSource('roads', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/road_footprints/{z}/{x}/{y}'],
+      minzoom: 10, maxzoom: 16,
+    });
+    map.addLayer({
+      id: 'roads-fill', type: 'fill', source: 'roads',
+      'source-layer': 'road_footprints',
+      layout: { visibility: 'none' },
+      paint: { 'fill-color': '#78909C', 'fill-opacity': 0.5 },
+    });
+    map.addLayer({
+      id: 'roads-outline', type: 'line', source: 'roads',
+      'source-layer': 'road_footprints',
+      layout: { visibility: 'none' },
+      paint: { 'line-color': '#546E7A', 'line-width': 0.5 },
+    });
+
+    // Flood zones layer (on by default)
+    map.addSource('flood-zones', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/flood_zone_footprints/{z}/{x}/{y}'],
+      minzoom: 10, maxzoom: 16,
+    });
+    map.addLayer({
+      id: 'flood-zones-fill', type: 'fill', source: 'flood-zones',
+      'source-layer': 'flood_zone_footprints',
+      layout: { visibility: 'visible' },
+      paint: { 'fill-color': '#1565C0', 'fill-opacity': 0.3 },
+    });
+    map.addLayer({
+      id: 'flood-zones-outline', type: 'line', source: 'flood-zones',
+      'source-layer': 'flood_zone_footprints',
+      layout: { visibility: 'visible' },
+      paint: { 'line-color': '#0D47A1', 'line-width': 0.5 },
+    });
+
     // Polygon draw preview layers (after buildings-outline, before buildings-selected)
     map.addLayer({ id: 'draw-polygon-fill', type: 'fill', source: 'draw-polygon',
       paint: { 'fill-color': '#1a3a5c', 'fill-opacity': 0.15 } });
@@ -799,6 +1041,35 @@ function initMap() {
     map.on('mouseleave', 'buildings-fill', () => {
       if (selection.mode === 'normal') map.getCanvas().style.cursor = '';
     });
+
+    // Non-building feature click handlers
+    ['land-use-fill', 'roads-fill', 'flood-zones-fill'].forEach(layerId => {
+      map.on('click', layerId, async e => {
+        if (selection.mode !== 'normal') return;
+        const gmlid = e.features[0].properties.gmlid;
+        document.getElementById('detail-header').textContent = '地物詳細 / Feature Detail';
+        document.getElementById('detail-body').innerHTML = '<div class="spinner">Loading…</div>';
+        try {
+          const res = await fetch(`${API}/features/${gmlid}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          renderFeaturePanel(data);
+        } catch (err) {
+          document.getElementById('detail-body').innerHTML =
+            `<div class="error-card" style="margin:16px">エラー: ${escHtml(err.message)}</div>`;
+        }
+      });
+
+      map.on('mouseenter', layerId, () => {
+        if (selection.mode === 'normal') map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', layerId, () => {
+        if (selection.mode === 'normal') map.getCanvas().style.cursor = '';
+      });
+    });
+
+    // Build layer toggle panel
+    buildLayerPanel();
 
     // deck.gl overlay — rendered on top of MapLibre, used for LOD2 true-3D surfaces
     deckOverlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
@@ -1170,6 +1441,134 @@ function cancelPolygonDraw() {
     map.getSource('draw-polygon')?.setData({ type: 'FeatureCollection', features: [] });
     map.getSource('draw-vertices')?.setData({ type: 'FeatureCollection', features: [] });
   }
+}
+
+// ── Layer panel ──
+function buildLayerPanel() {
+  const panel = document.getElementById('layer-panel');
+  MAP_LAYERS.forEach(layer => {
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    row.innerHTML = `
+      <div class="layer-swatch" style="background:${layer.color}"></div>
+      <span>${layer.label}<br><small style="color:#94a3b8">${layer.label_en}</small></span>
+      <button class="layer-toggle ${layer.visible ? 'on' : ''}"
+              id="toggle-${layer.id}"
+              onclick="toggleLayer('${layer.id}')"></button>
+    `;
+    panel.appendChild(row);
+  });
+  updateLegend();
+}
+
+function toggleLayer(layerId) {
+  const cfg = MAP_LAYERS.find(l => l.id === layerId);
+  cfg.visible = !cfg.visible;
+  const vis = cfg.visible ? 'visible' : 'none';
+  [`${layerId}-fill`, `${layerId}-outline`].forEach(id => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
+  });
+  document.getElementById(`toggle-${layerId}`)
+    .classList.toggle('on', cfg.visible);
+  updateLegend();
+}
+
+// ── Legend panel ──
+let legendCollapsed = false;
+
+function updateLegend() {
+  const panel  = document.getElementById('legend-panel');
+  const body   = document.getElementById('legend-body');
+
+  // Per-layer legend items derived from existing color/label maps
+  const LEGEND_ITEMS = {
+    'buildings': [
+      ...Object.entries(USAGE_COLORS).map(([code, color]) => ({
+        color, label: USAGE_LABELS[code] || code,
+      })),
+      { color: DEFAULT_COLOR, label: 'その他建物' },
+    ],
+    'land-use': Object.entries(LAND_USE_COLORS).map(([code, color]) => ({
+      color, label: LAND_USE_LABELS[code] || code,
+    })),
+    'roads': [
+      { color: '#78909C', label: '道路 Road' },
+    ],
+    'flood-zones': [
+      { color: '#1565C0', label: '浸水区域 Flood Zone' },
+    ],
+  };
+
+  let html = '';
+  let hasContent = false;
+
+  MAP_LAYERS.forEach(layer => {
+    if (!layer.visible) return;
+    const items = LEGEND_ITEMS[layer.id];
+    if (!items?.length) return;
+    hasContent = true;
+
+    // Buildings and land-use get a 2-column grid; single-value layers get 1 column
+    const gridClass = items.length > 2 ? 'legend-grid' : 'legend-grid single-col';
+
+    html += `<div class="legend-section-title">${layer.label} / ${layer.label_en}</div>`;
+    html += `<div class="${gridClass}">`;
+    items.forEach(item => {
+      html += `<div class="legend-row">
+        <div class="legend-swatch" style="background:${item.color}"></div>
+        <span>${escHtml(item.label)}</span>
+      </div>`;
+    });
+    html += '</div>';
+  });
+
+  body.innerHTML = html;
+  panel.style.display = hasContent ? 'block' : 'none';
+  // Respect collapsed state
+  body.style.display = legendCollapsed ? 'none' : '';
+  document.getElementById('legend-collapse-btn').textContent = legendCollapsed ? '+' : '−';
+}
+
+function toggleLegendCollapse() {
+  legendCollapsed = !legendCollapsed;
+  document.getElementById('legend-body').style.display = legendCollapsed ? 'none' : '';
+  document.getElementById('legend-collapse-btn').textContent = legendCollapsed ? '+' : '−';
+}
+
+// ── Render non-building feature detail panel ──
+function renderFeaturePanel(data) {
+  const TYPE_LABELS = {
+    'LandUse':   '土地利用 / Land Use',
+    'Road':      '道路 / Road',
+    'WaterBody': '浸水区域 / Flood Zone',
+  };
+  document.getElementById('detail-header').textContent =
+    TYPE_LABELS[data.feature_type] || data.feature_type;
+
+  function attrRow(label, value) {
+    return `<div class="attr-row">
+      <span class="attr-label">${label}</span>
+      <span class="attr-value">${escHtml(String(value))}</span>
+    </div>`;
+  }
+
+  const a = data.attributes;
+  let html = '<div class="section-title">属性情報</div>';
+  if (a.class) {
+    const classLabel = data.feature_type === 'LandUse'
+      ? (LAND_USE_LABELS[a.class] || a.class)
+      : a.class;
+    html += attrRow('種類 / Class', classLabel + (LAND_USE_LABELS[a.class] ? ` (${a.class})` : ''));
+  }
+  if (a.function) html += attrRow('機能 / Function', a.function);
+  if (a.usage)    html += attrRow('用途 / Usage', a.usage);
+  if (!a.class && !a.function && !a.usage) {
+    html += '<div style="color:#94a3b8;font-size:0.82rem;padding:8px 0">属性データなし</div>';
+  }
+  html += '<div class="section-title">ID</div>' + attrRow('GML ID', data.gmlid);
+  html += '<div class="section-title">種別 / Type</div>' + attrRow('Feature Type', data.feature_type);
+
+  document.getElementById('detail-body').innerHTML = html;
 }
 
 // ─────────────────────────────────────────────
