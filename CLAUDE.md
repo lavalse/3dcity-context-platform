@@ -99,7 +99,7 @@ Key tables:
 
 - `citydb.cityobject` — Universal parent for every feature; holds `gmlid`, `envelope` (bounding box), `objectclass_id`
 - `citydb.building` — Building attributes: `measured_height`, `storeys_above_ground`, `usage`, `class`; use `WHERE building_root_id = id` to get only top-level buildings (excludes BuildingParts)
-- `citydb.thematic_surface` — LOD2 wall/roof/ground surface breakdown; `objectclass_id`: 33=Wall, 34=Roof, 35=Ground
+- `citydb.thematic_surface` — LOD2 wall/roof/ground surface breakdown; `objectclass_id`: 33=Roof, 34=Wall, 35=Ground (verified against `citydb.objectclass` table)
 - `citydb.surface_geometry` — Actual PostGIS geometries; linked from `building` via `lod1_solid_id` / `lod2_solid_id`
 - `citydb.land_use` — Land use zone polygons
 - `citydb.cityobject_genericattrib` — Key-value store for overflow attributes; PLATEAU `uro:` ADE attributes would land here (currently empty — ADE was dropped during import)
