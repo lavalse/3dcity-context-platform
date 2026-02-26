@@ -1,28 +1,31 @@
 """
 Buildings API — geometry endpoints for the map tab.
 
-GET /api/buildings?bbox=minLon,minLat,maxLon,maxLat
-    Returns a GeoJSON FeatureCollection of building envelopes in the viewport.
-    Max 3000 buildings per request; truncated=true if exceeded.
-
 GET /api/buildings/{gmlid}
     Returns attributes + LOD1 geometry + LOD2 thematic surfaces for one building.
 
 Note: All geometry queries use ST_FlipCoordinates() because 3DCityDB stores
 coordinates in (lat, lon) order (JGD2011 axis convention), but GeoJSON requires
 (lon, lat) order.
+
+Building footprints for the map overview are served as MVT vector tiles by Martin,
+not by this API. See data/migrations/001_building_footprints_mv.sql.
 """
 
 import json
-import asyncio
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from app.database import get_pool
 
 router = APIRouter()
 
-# Taito-ku full extent (lon, lat)
-TAITO_BBOX = (139.757, 35.695, 139.815, 35.740)
+CLASS_LABELS = {
+    "3001": "普通建物",
+    "3002": "堅牢建物",
+    "3003": "普通無壁舎",
+    "3004": "堅牢無壁舎",
+    "9999": "不明",
+}
 
 USAGE_LABELS = {
     "401": "業務施設",
@@ -43,87 +46,6 @@ USAGE_LABELS = {
 }
 
 
-@router.get("/buildings")
-async def get_buildings(
-    bbox: str = Query(
-        default=None,
-        description="minLon,minLat,maxLon,maxLat in WGS84/JGD2011",
-    )
-):
-    """Return building envelopes as GeoJSON FeatureCollection for the given bbox."""
-    if bbox:
-        try:
-            parts = [float(x) for x in bbox.split(",")]
-            if len(parts) != 4:
-                raise ValueError()
-            min_lon, min_lat, max_lon, max_lat = parts
-        except ValueError:
-            raise HTTPException(status_code=400, detail="bbox must be minLon,minLat,maxLon,maxLat")
-    else:
-        min_lon, min_lat, max_lon, max_lat = TAITO_BBOX
-
-    sql = """
-        SELECT
-            co.gmlid,
-            COALESCE(b.measured_height, 0)  AS measured_height,
-            b.usage,
-            b.storeys_above_ground,
-            (b.lod2_solid_id IS NOT NULL)   AS has_lod2,
-            ST_AsGeoJSON(ST_FlipCoordinates(co.envelope), 15, 0) AS geom_json
-        FROM citydb.building b
-        JOIN citydb.cityobject co ON co.id = b.id
-        WHERE b.building_root_id = b.id
-          AND co.envelope IS NOT NULL
-          AND ST_FlipCoordinates(co.envelope) && ST_MakeEnvelope($1, $2, $3, $4, 6668)
-        LIMIT 3001
-    """
-
-    pool = await get_pool()
-    try:
-        async with pool.acquire() as conn:
-            rows = await asyncio.wait_for(
-                conn.fetch(sql, min_lon, min_lat, max_lon, max_lat),
-                timeout=15,
-            )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Query timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    truncated = len(rows) > 3000
-    features = []
-    for row in rows[:3000]:
-        geom = json.loads(row["geom_json"])
-        # envelope is a 3D bbox polygon — drop Z for simpler GeoJSON
-        if geom.get("coordinates"):
-            geom["coordinates"] = [
-                [[c[0], c[1]] for c in ring]
-                for ring in geom["coordinates"]
-            ]
-        height = float(row["measured_height"]) if row["measured_height"] else 0
-        if height <= 0:
-            height = 3.0  # default 3m for unmeasured buildings
-        features.append({
-            "type": "Feature",
-            "geometry": geom,
-            "properties": {
-                "gmlid": row["gmlid"],
-                "measured_height": height,
-                "usage": row["usage"],
-                "usage_label": USAGE_LABELS.get(row["usage"] or "", "不明"),
-                "storeys_above_ground": row["storeys_above_ground"],
-                "has_lod2": bool(row["has_lod2"]),
-            },
-        })
-
-    return {
-        "type": "FeatureCollection",
-        "truncated": truncated,
-        "count": len(features),
-        "features": features,
-    }
-
-
 @router.get("/buildings/{gmlid}")
 async def get_building_detail(gmlid: str):
     """Return attributes + LOD1 + LOD2 geometry for a single building."""
@@ -133,6 +55,7 @@ async def get_building_detail(gmlid: str):
     attr_sql = """
         SELECT
             co.gmlid,
+            co.name,
             b.measured_height,
             b.storeys_above_ground,
             b.storeys_below_ground,
@@ -145,9 +68,23 @@ async def get_building_detail(gmlid: str):
         LIMIT 1
     """
 
-    # --- 2. LOD1 geometry ---
+    # --- 4. Generic attributes (uro: ADE overflow attributes) ---
+    generic_sql = """
+        SELECT ga.attrname, ga.datatype, ga.strval, ga.intval, ga.realval
+        FROM citydb.cityobject_genericattrib ga
+        JOIN citydb.building b ON b.id = ga.cityobject_id
+        JOIN citydb.cityobject co ON co.id = b.id
+        WHERE co.gmlid = $1
+        ORDER BY ga.attrname
+    """
+
+    # --- 2. LOD1 geometry — return single 2D footprint polygon ---
+    # Collect all solid faces, project to 2D, then take convex hull → building footprint.
     lod1_sql = """
-        SELECT ST_AsGeoJSON(ST_FlipCoordinates(sg.geometry), 15, 0) AS geom_json
+        SELECT ST_AsGeoJSON(
+            ST_FlipCoordinates(ST_ConvexHull(ST_Collect(ST_Force2D(sg.geometry)))),
+            15, 0
+        ) AS geom_json
         FROM citydb.building b
         JOIN citydb.cityobject co ON co.id = b.id
         JOIN citydb.surface_geometry sg ON sg.root_id = b.lod1_solid_id
@@ -173,6 +110,7 @@ async def get_building_detail(gmlid: str):
             attr_rows = await conn.fetch(attr_sql, gmlid)
             lod1_rows = await conn.fetch(lod1_sql, gmlid)
             lod2_rows = await conn.fetch(lod2_sql, gmlid)
+            generic_rows = await conn.fetch(generic_sql, gmlid)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -181,36 +119,54 @@ async def get_building_detail(gmlid: str):
 
     attr = attr_rows[0]
 
-    # Build LOD1 FeatureCollection (drop Z for 2D map rendering)
     def make_feature(geom_json: str, props: dict = None) -> dict:
         geom = json.loads(geom_json)
-        # Keep Z coordinates for LOD surfaces (useful for 3D context)
         return {"type": "Feature", "geometry": geom, "properties": props or {}}
+
+    # Height used for fill-extrusion in the frontend
+    lod1_height = (
+        float(attr["measured_height"])
+        if attr["measured_height"] and float(attr["measured_height"]) > 0
+        else 10.0
+    )
 
     lod1_fc = {
         "type": "FeatureCollection",
-        "features": [make_feature(r["geom_json"]) for r in lod1_rows],
+        "features": [make_feature(r["geom_json"], {"height": lod1_height}) for r in lod1_rows],
     }
 
     # Split LOD2 surfaces by type
-    # objectclass_id: 33=Wall, 34=Roof, 35=Ground
+    # Verified against citydb.objectclass: 33=BuildingRoofSurface, 34=BuildingWallSurface, 35=BuildingGroundSurface
     wall_features, roof_features, ground_features = [], [], []
     for r in lod2_rows:
         feat = make_feature(r["geom_json"], {"surface_type": r["objectclass_id"]})
         oc = r["objectclass_id"]
         if oc == 33:
-            wall_features.append(feat)
-        elif oc == 34:
             roof_features.append(feat)
+        elif oc == 34:
+            wall_features.append(feat)
         elif oc == 35:
             ground_features.append(feat)
 
     def fc(features):
         return {"type": "FeatureCollection", "features": features}
 
+    def _generic_value(r):
+        dt = r["datatype"]
+        if dt == 1:
+            return r["strval"]
+        elif dt == 2:
+            return r["intval"]
+        elif dt in (3, 6):
+            v = r["realval"]
+            return round(float(v), 3) if v is not None else None
+        else:
+            return r["strval"]
+
     return {
         "gmlid": attr["gmlid"],
         "attributes": {
+            "name": attr["name"] or None,
             "measured_height": float(attr["measured_height"]) if attr["measured_height"] else None,
             "usage": attr["usage"],
             "usage_label": USAGE_LABELS.get(attr["usage"] or "", "不明"),
@@ -225,8 +181,13 @@ async def get_building_detail(gmlid: str):
                 else None
             ),
             "class": attr["class"],
+            "class_label": CLASS_LABELS.get(attr["class"] or "", ""),
             "has_lod2": bool(attr["has_lod2"]),
         },
+        "generic_attrs": [
+            {"name": r["attrname"], "value": _generic_value(r)}
+            for r in generic_rows
+        ],
         "lod1": lod1_fc,
         "lod2": {
             "wall": fc(wall_features),

@@ -64,6 +64,20 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # ------------------------------------------------------------------
+  # Martin: MVT tile server — auto-discovers PostGIS tables/views
+  # Serves building_footprints materialized view as vector tiles.
+  # Internal port 3000; accessed via nginx /tiles/ proxy.
+  # ------------------------------------------------------------------
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    environment:
+      - DATABASE_URL=postgresql://citydb:citydb@db:5432/citydb
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------
   # Frontend: static HTML/JS served by nginx
   # ------------------------------------------------------------------
   frontend:
