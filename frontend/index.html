@@ -12,6 +12,9 @@
   <!-- deck.gl — LOD2 true 3D surface rendering -->
   <script src="https://unpkg.com/deck.gl@9.0.4/dist.min.js"></script>
 
+  <!-- Turf.js — polygon point-in-polygon test for polygon selection mode -->
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -297,6 +300,28 @@
     .legend-item { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #475569; }
     .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
+    /* Selection toolbar */
+    #selection-toolbar {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      display: flex; gap: 6px; background: white;
+      border-radius: 8px; padding: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .sel-btn {
+      padding: 6px 12px; border: 2px solid #e2e8f0; border-radius: 6px;
+      background: white; font-size: 0.78rem; font-weight: 600;
+      cursor: pointer; color: #475569; font-family: inherit;
+    }
+    .sel-btn:hover  { border-color: #1a3a5c; color: #1a3a5c; }
+    .sel-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+
+    /* Rubber-band rectangle */
+    #rubber-band {
+      position: absolute; border: 2px solid #1a3a5c;
+      background: rgba(26,58,92,0.1);
+      pointer-events: none; display: none; z-index: 5;
+    }
+
     .hidden { display: none !important; }
   </style>
 </head>
@@ -356,10 +381,17 @@
 <div class="tab-pane" id="tab-map">
   <div id="map-container">
     <div id="map"></div>
+    <div id="selection-toolbar">
+      <button class="sel-btn active" id="sel-normal-btn" onclick="setSelectionMode('normal')">クリック</button>
+      <button class="sel-btn"        id="sel-box-btn"    onclick="setSelectionMode('box')">ボックス</button>
+      <button class="sel-btn"        id="sel-poly-btn"   onclick="setSelectionMode('polygon')">ポリゴン</button>
+      <button class="sel-btn" onclick="clearSelection()" style="color:#dc2626">クリア</button>
+    </div>
+    <div id="rubber-band"></div>
   </div>
 
   <div id="detail-panel">
-    <div class="detail-header">建物詳細 / Building Detail</div>
+    <div class="detail-header" id="detail-header">建物詳細 / Building Detail</div>
     <div class="detail-body" id="detail-body">
       <div class="detail-empty">
         地図上の建物をクリックすると<br>詳細情報が表示されます
@@ -561,9 +593,20 @@ function copySQL() {
 
 let map = null;
 let deckOverlay = null;
-let selectedGmlid = null;
-let lod1Active = false;
-let lod2Active = false;
+
+// ── Selection state ──
+const selection = {
+  mode: 'normal',       // 'normal' | 'box' | 'polygon'
+  gmlids: new Set(),
+  data: new Map(),      // gmlid → API response (currently selected)
+  lod1Active: false,
+  lod2Active: false,
+};
+
+const buildingCache = new Map();  // persistent fetch cache, max 200 entries
+
+const drawState = { vertices: [] };          // polygon draw
+const boxState  = { active: false, startPixel: null, div: null };  // box draw
 
 function initMap() {
   map = new maplibregl.Map({
@@ -592,6 +635,8 @@ function initMap() {
     map.addSource('selected-lod2-wall',   { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addSource('selected-lod2-roof',   { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addSource('selected-lod2-ground', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource('draw-polygon',  { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource('draw-vertices', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
     // Buildings flat fill (LOD1 footprints colored by usage)
     map.addLayer({
@@ -620,6 +665,14 @@ function initMap() {
       'source-layer': 'building_footprints',
       paint: { 'line-color': 'rgba(0,0,0,0.2)', 'line-width': 0.5 },
     });
+
+    // Polygon draw preview layers (after buildings-outline, before buildings-selected)
+    map.addLayer({ id: 'draw-polygon-fill', type: 'fill', source: 'draw-polygon',
+      paint: { 'fill-color': '#1a3a5c', 'fill-opacity': 0.15 } });
+    map.addLayer({ id: 'draw-polygon-line', type: 'line', source: 'draw-polygon',
+      paint: { 'line-color': '#1a3a5c', 'line-width': 2, 'line-dasharray': [4, 2] } });
+    map.addLayer({ id: 'draw-vertices-circle', type: 'circle', source: 'draw-vertices',
+      paint: { 'circle-radius': 5, 'circle-color': '#1a3a5c', 'circle-stroke-width': 2, 'circle-stroke-color': 'white' } });
 
     // Selected building highlight (white outline)
     map.addLayer({
@@ -674,17 +727,77 @@ function initMap() {
       paint: { 'line-color': '#FF6D00', 'line-width': 1.5 },
     });
 
-    // Click on building
+    // ── Box-select: canvas event listeners ──
+    const canvas = map.getCanvas();
+
+    canvas.addEventListener('mousedown', e => {
+      if (selection.mode !== 'box' || e.button !== 0) return;
+      e.preventDefault();
+      boxState.active = true;
+      boxState.startPixel = { x: e.offsetX, y: e.offsetY };
+      const rb = document.getElementById('rubber-band');
+      Object.assign(rb.style, {
+        left: e.offsetX + 'px', top: e.offsetY + 'px',
+        width: '0', height: '0', display: 'block',
+      });
+      boxState.div = rb;
+    });
+
+    canvas.addEventListener('mousemove', e => {
+      if (!boxState.active) return;
+      const { x: sx, y: sy } = boxState.startPixel;
+      Object.assign(boxState.div.style, {
+        left:   Math.min(sx, e.offsetX) + 'px',
+        top:    Math.min(sy, e.offsetY) + 'px',
+        width:  Math.abs(e.offsetX - sx) + 'px',
+        height: Math.abs(e.offsetY - sy) + 'px',
+      });
+    });
+
+    canvas.addEventListener('mouseup', e => {
+      if (!boxState.active || selection.mode !== 'box') return;
+      boxState.active = false;
+      boxState.div.style.display = 'none';
+      const { x: sx, y: sy } = boxState.startPixel;
+      const ex = e.offsetX, ey = e.offsetY;
+      if (Math.abs(ex - sx) < 5 || Math.abs(ey - sy) < 5) return;  // degenerate
+      const features = map.queryRenderedFeatures(
+        [[Math.min(sx, ex), Math.min(sy, ey)], [Math.max(sx, ex), Math.max(sy, ey)]],
+        { layers: ['buildings-fill'] }
+      );
+      applySelection([...new Set(features.map(f => f.properties.gmlid))]);
+    });
+
+    // ── Polygon-draw event listeners ──
+    map.on('click', e => {
+      if (selection.mode !== 'polygon') return;
+      if (e.originalEvent.detail === 2) return;  // double-click fires click twice — ignore
+      drawState.vertices.push([e.lngLat.lng, e.lngLat.lat]);
+      updateDrawLayers();
+    });
+
+    map.on('dblclick', e => {
+      if (selection.mode !== 'polygon') return;
+      e.preventDefault();
+      if (drawState.vertices.length < 3) { cancelPolygonDraw(); return; }
+      finishPolygonDraw();
+    });
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && selection.mode === 'polygon') cancelPolygonDraw();
+    });
+
+    // ── Building click / hover ──
     map.on('click', 'buildings-fill', e => {
-      const props = e.features[0].properties;
-      selectBuilding(props.gmlid);
+      if (selection.mode !== 'normal') return;
+      applySelection([e.features[0].properties.gmlid]);
     });
 
     map.on('mouseenter', 'buildings-fill', () => {
-      map.getCanvas().style.cursor = 'pointer';
+      if (selection.mode === 'normal') map.getCanvas().style.cursor = 'pointer';
     });
     map.on('mouseleave', 'buildings-fill', () => {
-      map.getCanvas().style.cursor = '';
+      if (selection.mode === 'normal') map.getCanvas().style.cursor = '';
     });
 
     // deck.gl overlay — rendered on top of MapLibre, used for LOD2 true-3D surfaces
@@ -693,36 +806,149 @@ function initMap() {
   });
 }
 
-// ── Select a building ──
-async function selectBuilding(gmlid) {
-  selectedGmlid = gmlid;
-  lod1Active = false;
-  lod2Active = false;
+// ── Set selection mode ──
+function setSelectionMode(mode) {
+  if (selection.mode === 'polygon') cancelPolygonDraw();
+  if (selection.mode === 'box') cancelBoxSelect();
 
-  // Reset map to flat top-down view
-  map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
+  selection.mode = mode;
 
-  // Highlight in the overview layer
-  map.setFilter('buildings-selected', ['==', 'gmlid', gmlid]);
+  // Update toolbar button active states
+  ['sel-normal-btn', 'sel-box-btn', 'sel-poly-btn'].forEach(id => {
+    document.getElementById(id)?.classList.remove('active');
+  });
+  const btnId = { normal: 'sel-normal-btn', box: 'sel-box-btn', polygon: 'sel-poly-btn' }[mode];
+  document.getElementById(btnId)?.classList.add('active');
 
-  // Clear previous LOD layers
-  clearLodLayers();
-
-  // Show loading in panel
-  document.getElementById('detail-body').innerHTML = '<div class="spinner">Loading…</div>';
-
-  try {
-    const res  = await fetch(`${API}/buildings/${gmlid}`);
-    const data = await res.json();
-    renderDetailPanel(data);
-  } catch (err) {
-    document.getElementById('detail-body').innerHTML =
-      `<div class="error-card" style="margin:16px">エラー: ${err.message}</div>`;
+  if (mode === 'box') {
+    map.dragPan.disable();
+    map.getCanvas().style.cursor = 'crosshair';
+  } else {
+    map.dragPan.enable();
+    map.getCanvas().style.cursor = mode === 'polygon' ? 'crosshair' : '';
   }
 }
 
-// ── Render attribute panel ──
+// ── Apply a selection (array of gmlids) ──
+async function applySelection(gmlids) {
+  selection.gmlids = new Set(gmlids);
+  selection.data.clear();
+  selection.lod1Active = false;
+  selection.lod2Active = false;
+
+  map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
+
+  const filter = gmlids.length === 0
+    ? ['==', 'gmlid', '']
+    : ['in', ['get', 'gmlid'], ['literal', gmlids]];
+  map.setFilter('buildings-selected', filter);
+
+  clearLodLayers();
+
+  if (gmlids.length === 0) {
+    document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
+    document.getElementById('detail-body').innerHTML =
+      '<div class="detail-empty">地図上の建物をクリックすると<br>詳細情報が表示されます</div>';
+    return;
+  }
+
+  document.getElementById('detail-body').innerHTML = '<div class="spinner">Loading…</div>';
+
+  const total = gmlids.length;
+  const tooMany = total > 50;
+  const toFetch = gmlids.slice(0, 50);
+
+  const results = await Promise.allSettled(toFetch.map(id => fetchBuilding(id)));
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') selection.data.set(toFetch[i], r.value);
+  });
+
+  if (selection.data.size === 1) {
+    const [singleData] = selection.data.values();
+    renderDetailPanel(singleData);
+  } else {
+    renderMultiSelectPanel(tooMany, total);
+  }
+}
+
+// ── Fetch a single building (with persistent cache) ──
+async function fetchBuilding(gmlid) {
+  if (buildingCache.has(gmlid)) return buildingCache.get(gmlid);
+  const res = await fetch(`${API}/buildings/${gmlid}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (buildingCache.size >= 200) {
+    buildingCache.delete(buildingCache.keys().next().value);
+  }
+  buildingCache.set(gmlid, data);
+  return data;
+}
+
+// ── Merge feature collections from multiple API responses ──
+function mergeFeatureCollections(responses, accessor) {
+  return { type: 'FeatureCollection', features: responses.flatMap(r => accessor(r).features) };
+}
+
+// ── Render multi-building selection panel ──
+function renderMultiSelectPanel(tooMany, total) {
+  const values = [...selection.data.values()];
+  const lod2Count = values.filter(d => d.attributes.has_lod2).length;
+  const heights = values.map(d => d.attributes.measured_height).filter(h => h != null && h > 0);
+  const avgHeight = heights.length > 0
+    ? (heights.reduce((a, b) => a + b, 0) / heights.length).toFixed(1)
+    : null;
+
+  const usageCounts = {};
+  values.forEach(d => {
+    const u = d.attributes.usage_label || '不明';
+    usageCounts[u] = (usageCounts[u] || 0) + 1;
+  });
+  const topUsages = Object.entries(usageCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  const lod2Attr = lod2Count === 0 ? 'disabled title="選択中にLOD2データなし"' : '';
+
+  let html = `
+    <div class="section-title">集計情報</div>
+    <div class="attr-row"><span class="attr-label">選択棟数</span><span class="attr-value">${values.length}棟</span></div>
+    <div class="attr-row"><span class="attr-label">LOD2あり</span><span class="attr-value">${lod2Count}棟</span></div>
+    ${avgHeight != null ? `<div class="attr-row"><span class="attr-label">平均高さ</span><span class="attr-value">${avgHeight} m</span></div>` : ''}
+  `;
+
+  if (topUsages.length > 0) {
+    html += '<div class="section-title">主な用途</div>';
+    topUsages.forEach(([label, count]) => {
+      html += `<div class="attr-row"><span class="attr-label">${escHtml(label)}</span><span class="attr-value">${count}棟</span></div>`;
+    });
+  }
+
+  html += `
+    <div class="section-title">ジオメトリ表示</div>
+    <div class="lod-section">
+      <div class="lod-buttons">
+        <button class="lod-btn" id="lod1-btn" onclick="toggleLod1()">LOD1</button>
+        <button class="lod-btn" id="lod2-btn" onclick="toggleLod2()" ${lod2Attr}>LOD2</button>
+      </div>
+      <div class="lod-legend" id="lod-legend" style="display:none">
+        <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>地面 Ground</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>屋根 Roof</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>壁 Wall</div>
+      </div>
+    </div>
+  `;
+
+  if (tooMany) {
+    html += `<div style="margin-top:12px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:0.75rem;color:#92400e">
+      ⚠ ${total}棟選択中。最初の50棟のみ表示しています。
+    </div>`;
+  }
+
+  document.getElementById('detail-header').textContent = `${values.length}棟 選択中`;
+  document.getElementById('detail-body').innerHTML = html;
+}
+
+// ── Render single-building attribute panel ──
 function renderDetailPanel(data) {
+  document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
   const a = data.attributes;
   const hasLod2 = a.has_lod2;
 
@@ -775,47 +1001,42 @@ function renderDetailPanel(data) {
 
   document.getElementById('detail-body').innerHTML =
     basicHtml + genericHtml + lodHtml + idHtml;
-
-  // Store data for LOD toggle
-  window._currentBuilding = data;
 }
 
 // ── LOD toggles ──
 function toggleLod1() {
-  if (!window._currentBuilding) return;
-  lod1Active = !lod1Active;
+  if (selection.data.size === 0) return;
+  selection.lod1Active = !selection.lod1Active;
 
   const btn = document.getElementById('lod1-btn');
-  btn.classList.toggle('active', lod1Active);
+  btn.classList.toggle('active', selection.lod1Active);
 
-  if (lod1Active) {
-    map.getSource('selected-lod1').setData(window._currentBuilding.lod1);
+  if (selection.lod1Active) {
+    const merged = mergeFeatureCollections([...selection.data.values()], r => r.lod1);
+    map.getSource('selected-lod1').setData(merged);
     map.easeTo({ pitch: 45, bearing: -15, duration: 500 });
   } else {
     map.getSource('selected-lod1').setData({ type: 'FeatureCollection', features: [] });
-    if (!lod2Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
+    if (!selection.lod2Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
   }
 }
 
 function toggleLod2() {
-  if (!window._currentBuilding || !window._currentBuilding.attributes.has_lod2) return;
-  lod2Active = !lod2Active;
+  const lod2Builds = [...selection.data.values()].filter(d => d.attributes.has_lod2);
+  if (lod2Builds.length === 0) return;
+  selection.lod2Active = !selection.lod2Active;
 
   const btn = document.getElementById('lod2-btn');
-  btn.classList.toggle('active', lod2Active);
-  document.getElementById('lod-legend').style.display = lod2Active ? 'block' : 'none';
+  btn.classList.toggle('active', selection.lod2Active);
+  const legend = document.getElementById('lod-legend');
+  if (legend) legend.style.display = selection.lod2Active ? 'block' : 'none';
 
-  if (lod2Active) {
-    const lod2 = window._currentBuilding.lod2;
-    // Render LOD2 thematic surfaces as true 3D polygons via deck.gl.
-    // Coordinates from the backend include Z (meters), so each vertex is
-    // placed at its actual 3D position — walls render as vertical planes,
-    // roof/ground as horizontal faces at their correct elevation.
+  if (selection.lod2Active) {
     deckOverlay.setProps({
       layers: [
         new deck.PolygonLayer({
           id: 'lod2-ground',
-          data: lod2.ground.features,
+          data: mergeFeatureCollections(lod2Builds, r => r.lod2.ground).features,
           getPolygon: f => f.geometry.coordinates[0],
           getFillColor: [76, 175, 80, 180],
           getLineColor: [76, 175, 80, 255],
@@ -826,7 +1047,7 @@ function toggleLod2() {
         }),
         new deck.PolygonLayer({
           id: 'lod2-roof',
-          data: lod2.roof.features,
+          data: mergeFeatureCollections(lod2Builds, r => r.lod2.roof).features,
           getPolygon: f => f.geometry.coordinates[0],
           getFillColor: [33, 150, 243, 200],
           getLineColor: [33, 150, 243, 255],
@@ -837,7 +1058,7 @@ function toggleLod2() {
         }),
         new deck.PolygonLayer({
           id: 'lod2-wall',
-          data: lod2.wall.features,
+          data: mergeFeatureCollections(lod2Builds, r => r.lod2.wall).features,
           getPolygon: f => f.geometry.coordinates[0],
           getFillColor: [255, 152, 0, 160],
           getLineColor: [255, 109, 0, 220],
@@ -851,7 +1072,7 @@ function toggleLod2() {
     map.easeTo({ pitch: 45, bearing: -15, duration: 500 });
   } else {
     clearLodLayers(/* keepLod1 */ true);
-    if (!lod1Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
+    if (!selection.lod1Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
   }
 }
 
@@ -866,6 +1087,89 @@ function clearLodLayers(keepLod1 = false) {
   map.getSource('selected-lod2-ground')?.setData(empty);
   // Clear deck.gl LOD2 layers
   if (deckOverlay) deckOverlay.setProps({ layers: [] });
+}
+
+// ── Clear all selections ──
+function clearSelection() {
+  selection.gmlids.clear();
+  selection.data.clear();
+  selection.lod1Active = false;
+  selection.lod2Active = false;
+  if (map) {
+    map.setFilter('buildings-selected', ['==', 'gmlid', '']);
+    clearLodLayers();
+  }
+  document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
+  document.getElementById('detail-body').innerHTML =
+    '<div class="detail-empty">地図上の建物をクリックすると<br>詳細情報が表示されます</div>';
+}
+
+// ── Cancel box select (cleanup rubber-band) ──
+function cancelBoxSelect() {
+  boxState.active = false;
+  const rb = document.getElementById('rubber-band');
+  if (rb) rb.style.display = 'none';
+}
+
+// ── Polygon draw helpers ──
+function updateDrawLayers() {
+  const verts = drawState.vertices;
+  map.getSource('draw-vertices').setData({
+    type: 'FeatureCollection',
+    features: verts.map(v => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: v },
+      properties: {},
+    })),
+  });
+  if (verts.length >= 2) {
+    map.getSource('draw-polygon').setData({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [[...verts, verts[0]]] },
+        properties: {},
+      }],
+    });
+  } else {
+    map.getSource('draw-polygon').setData({ type: 'FeatureCollection', features: [] });
+  }
+}
+
+function finishPolygonDraw() {
+  const verts = drawState.vertices;
+  const poly = turf.polygon([[...verts, verts[0]]]);
+
+  const renderedFeatures = map.queryRenderedFeatures({ layers: ['buildings-fill'] });
+  const matchedGmlids = [];
+  const seen = new Set();
+
+  renderedFeatures.forEach(f => {
+    const gmlid = f.properties.gmlid;
+    if (seen.has(gmlid)) return;
+    seen.add(gmlid);
+
+    const ring = f.geometry.type === 'MultiPolygon'
+      ? f.geometry.coordinates[0][0]
+      : f.geometry.coordinates[0];
+    const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+    const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+
+    if (turf.booleanPointInPolygon(turf.point([cx, cy]), poly)) {
+      matchedGmlids.push(gmlid);
+    }
+  });
+
+  cancelPolygonDraw();
+  if (matchedGmlids.length > 0) applySelection(matchedGmlids);
+}
+
+function cancelPolygonDraw() {
+  drawState.vertices = [];
+  if (map) {
+    map.getSource('draw-polygon')?.setData({ type: 'FeatureCollection', features: [] });
+    map.getSource('draw-vertices')?.setData({ type: 'FeatureCollection', features: [] });
+  }
 }
 
 // ─────────────────────────────────────────────
