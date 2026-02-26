@@ -9,6 +9,9 @@
   <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
 
+  <!-- deck.gl — LOD2 true 3D surface rendering -->
+  <script src="https://unpkg.com/deck.gl@9.0.4/dist.min.js"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -214,23 +217,6 @@
     #map-container { flex: 1; position: relative; }
     #map { width: 100%; height: 100%; }
 
-    /* map status overlay */
-    #map-status {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(26,58,92,0.85);
-      color: white;
-      font-size: 0.78rem;
-      padding: 5px 14px;
-      border-radius: 20px;
-      pointer-events: none;
-      z-index: 10;
-      transition: opacity 0.3s;
-    }
-    #map-status.hidden { opacity: 0; }
-
     /* ── Detail panel ── */
     #detail-panel {
       width: 300px;
@@ -274,8 +260,18 @@
     .attr-label { color: #64748b; font-weight: 500; }
     .attr-value { color: #1e293b; font-weight: 600; text-align: right; max-width: 160px; word-break: break-all; }
 
+    /* Section title */
+    .section-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 14px 0 6px;
+    }
+
     /* LOD buttons */
-    .lod-section { margin-top: 16px; }
+    .lod-section { margin-top: 4px; }
     .lod-title { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
     .lod-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
     .lod-btn {
@@ -360,7 +356,6 @@
 <div class="tab-pane" id="tab-map">
   <div id="map-container">
     <div id="map"></div>
-    <div id="map-status" class="hidden">読み込み中…</div>
   </div>
 
   <div id="detail-panel">
@@ -565,10 +560,10 @@ function copySQL() {
 // ─────────────────────────────────────────────
 
 let map = null;
+let deckOverlay = null;
 let selectedGmlid = null;
 let lod1Active = false;
 let lod2Active = false;
-let loadTimer = null;
 
 function initMap() {
   map = new maplibregl.Map({
@@ -576,28 +571,36 @@ function initMap() {
     style: 'https://tiles.openfreemap.org/styles/liberty',
     center: [139.7833, 35.7122],
     zoom: 14,
-    pitch: 45,
-    bearing: -15,
-    antialias: true,
   });
 
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
   map.on('load', () => {
-    // Add empty GeoJSON sources
-    map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    // Remove 3D building extrusions from the basemap style
+    map.getStyle().layers
+      .filter(l => l.type === 'fill-extrusion')
+      .forEach(l => map.removeLayer(l.id));
+
+    // Building footprints via Martin MVT — all 72,486 buildings, real LOD1 outlines
+    map.addSource('buildings', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/building_footprints/{z}/{x}/{y}'],
+      minzoom: 10,
+      maxzoom: 16,
+    });
     map.addSource('selected-lod1', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addSource('selected-lod2-wall',   { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addSource('selected-lod2-roof',   { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addSource('selected-lod2-ground', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
-    // Buildings fill-extrusion (LOD0 overview with height)
+    // Buildings flat fill (LOD1 footprints colored by usage)
     map.addLayer({
-      id: 'buildings-extrusion',
-      type: 'fill-extrusion',
+      id: 'buildings-fill',
+      type: 'fill',
       source: 'buildings',
+      'source-layer': 'building_footprints',
       paint: {
-        'fill-extrusion-color': [
+        'fill-color': [
           'match', ['get', 'usage'],
           '411', '#4CAF50', '412', '#8BC34A', '413', '#CDDC39',
           '414', '#AFB42B', '415', '#9E9D24',
@@ -607,58 +610,62 @@ function initMap() {
           '454', '#607D8B', '461', '#9E9E9E',
           '#FF9800'
         ],
-        'fill-extrusion-height': ['get', 'measured_height'],
+        'fill-opacity': 0.6,
+      },
+    });
+    map.addLayer({
+      id: 'buildings-outline',
+      type: 'line',
+      source: 'buildings',
+      'source-layer': 'building_footprints',
+      paint: { 'line-color': 'rgba(0,0,0,0.2)', 'line-width': 0.5 },
+    });
+
+    // Selected building highlight (white outline)
+    map.addLayer({
+      id: 'buildings-selected',
+      type: 'line',
+      source: 'buildings',
+      'source-layer': 'building_footprints',
+      filter: ['==', 'gmlid', ''],
+      paint: { 'line-color': '#ffffff', 'line-width': 3 },
+    });
+
+    // LOD1 — 3D extrusion of building footprint
+    map.addLayer({
+      id: 'selected-lod1-extrusion',
+      type: 'fill-extrusion',
+      source: 'selected-lod1',
+      paint: {
+        'fill-extrusion-color': '#FFD600',
+        'fill-extrusion-height': ['get', 'height'],
         'fill-extrusion-base': 0,
         'fill-extrusion-opacity': 0.85,
       },
     });
 
-    // Selected building highlight (white outline over the extrusion)
+    // LOD2 surface layers — 3D extrusions
     map.addLayer({
-      id: 'buildings-selected',
+      id: 'selected-lod2-ground-extrusion',
       type: 'fill-extrusion',
-      source: 'buildings',
-      filter: ['==', 'gmlid', ''],
+      source: 'selected-lod2-ground',
       paint: {
-        'fill-extrusion-color': '#ffffff',
-        'fill-extrusion-height': ['get', 'measured_height'],
+        'fill-extrusion-color': '#4CAF50',
+        'fill-extrusion-height': 0,
         'fill-extrusion-base': 0,
-        'fill-extrusion-opacity': 0.5,
+        'fill-extrusion-opacity': 0.7,
       },
     });
-
-    // LOD1 outline (yellow polygon)
     map.addLayer({
-      id: 'selected-lod1-fill',
-      type: 'fill',
-      source: 'selected-lod1',
-      paint: { 'fill-color': '#FFD600', 'fill-opacity': 0.3 },
-    });
-    map.addLayer({
-      id: 'selected-lod1-line',
-      type: 'line',
-      source: 'selected-lod1',
-      paint: { 'line-color': '#FFD600', 'line-width': 2 },
-    });
-
-    // LOD2 surface layers
-    map.addLayer({
-      id: 'selected-lod2-ground-fill',
-      type: 'fill',
-      source: 'selected-lod2-ground',
-      paint: { 'fill-color': '#4CAF50', 'fill-opacity': 0.5 },
-    });
-    map.addLayer({
-      id: 'selected-lod2-roof-fill',
-      type: 'fill',
+      id: 'selected-lod2-roof-extrusion',
+      type: 'fill-extrusion',
       source: 'selected-lod2-roof',
-      paint: { 'fill-color': '#2196F3', 'fill-opacity': 0.6 },
-    });
-    map.addLayer({
-      id: 'selected-lod2-wall-fill',
-      type: 'fill',
-      source: 'selected-lod2-wall',
-      paint: { 'fill-color': '#FF9800', 'fill-opacity': 0.5 },
+      paint: {
+        'fill-extrusion-color': '#2196F3',
+        'fill-extrusion-height': 0,
+        'fill-extrusion-base': 0,
+        'fill-extrusion-opacity': 0.9,
+      },
     });
     map.addLayer({
       id: 'selected-lod2-wall-line',
@@ -668,61 +675,22 @@ function initMap() {
     });
 
     // Click on building
-    map.on('click', 'buildings-extrusion', e => {
+    map.on('click', 'buildings-fill', e => {
       const props = e.features[0].properties;
       selectBuilding(props.gmlid);
     });
 
-    map.on('mouseenter', 'buildings-extrusion', () => {
+    map.on('mouseenter', 'buildings-fill', () => {
       map.getCanvas().style.cursor = 'pointer';
     });
-    map.on('mouseleave', 'buildings-extrusion', () => {
+    map.on('mouseleave', 'buildings-fill', () => {
       map.getCanvas().style.cursor = '';
     });
 
-    // Load buildings whenever map stops moving
-    map.on('moveend', () => {
-      clearTimeout(loadTimer);
-      loadTimer = setTimeout(loadBuildingsInView, 300);
-    });
-
-    loadBuildingsInView();
+    // deck.gl overlay — rendered on top of MapLibre, used for LOD2 true-3D surfaces
+    deckOverlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
+    map.addControl(deckOverlay);
   });
-}
-
-// ── Load buildings for current viewport ──
-async function loadBuildingsInView() {
-  if (!map) return;
-  const bounds = map.getBounds();
-  const bbox = [
-    bounds.getWest().toFixed(6),
-    bounds.getSouth().toFixed(6),
-    bounds.getEast().toFixed(6),
-    bounds.getNorth().toFixed(6),
-  ].join(',');
-
-  showMapStatus('建物データ読み込み中…');
-  try {
-    const res  = await fetch(`${API}/buildings?bbox=${bbox}`);
-    const data = await res.json();
-    map.getSource('buildings').setData(data);
-
-    const msg = data.truncated
-      ? `${data.count.toLocaleString()} 棟表示中（制限超過 — ズームインしてください）`
-      : `${data.count.toLocaleString()} 棟`;
-    showMapStatus(msg, 2000);
-  } catch (err) {
-    showMapStatus('読み込みエラー: ' + err.message, 3000);
-  }
-}
-
-function showMapStatus(msg, hideAfterMs = null) {
-  const el = document.getElementById('map-status');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-  if (hideAfterMs) {
-    setTimeout(() => el.classList.add('hidden'), hideAfterMs);
-  }
 }
 
 // ── Select a building ──
@@ -730,6 +698,9 @@ async function selectBuilding(gmlid) {
   selectedGmlid = gmlid;
   lod1Active = false;
   lod2Active = false;
+
+  // Reset map to flat top-down view
+  map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
 
   // Highlight in the overview layer
   map.setFilter('buildings-selected', ['==', 'gmlid', gmlid]);
@@ -755,28 +726,36 @@ function renderDetailPanel(data) {
   const a = data.attributes;
   const hasLod2 = a.has_lod2;
 
-  const rows = [
-    ['GML ID',   data.gmlid],
-    ['用途',      `${a.usage_label} (${a.usage || '—'})`],
-    ['高さ',      a.measured_height != null ? `${a.measured_height} m` : '不明'],
-    ['地上階数',  a.storeys_above_ground != null ? `${a.storeys_above_ground} 階` : '不明'],
-    ['地下階数',  a.storeys_below_ground ? `${a.storeys_below_ground} 階` : '—'],
-  ];
-
-  const attrsHtml = rows.map(([label, value]) => `
-    <div class="attr-row">
+  function attrRow(label, value) {
+    return `<div class="attr-row">
       <span class="attr-label">${label}</span>
       <span class="attr-value">${escHtml(String(value))}</span>
-    </div>
-  `).join('');
+    </div>`;
+  }
 
+  // ── Section 1: 基本情報 ──
+  let basicHtml = '<div class="section-title">基本情報</div>';
+  if (a.name) basicHtml += attrRow('建物名称', a.name);
+  basicHtml += attrRow('用途', `${a.usage_label} (${a.usage || '—'})`);
+  if (a.class_label) basicHtml += attrRow('建物区分', `${a.class_label} (${a.class})`);
+  basicHtml += attrRow('高さ', a.measured_height != null ? `${a.measured_height} m` : '不明');
+  basicHtml += attrRow('地上階数', a.storeys_above_ground != null ? `${a.storeys_above_ground} 階` : '不明');
+  if (a.storeys_below_ground) basicHtml += attrRow('地下階数', `${a.storeys_below_ground} 階`);
+
+  // ── Section 2: 属性情報 (generic attrs) ──
+  let genericHtml = '';
+  if (data.generic_attrs && data.generic_attrs.length > 0) {
+    genericHtml = '<div class="section-title">属性情報</div>';
+    genericHtml += data.generic_attrs.map(g =>
+      attrRow(g.name, g.value != null ? g.value : '—')
+    ).join('');
+  }
+
+  // ── Section 3: ジオメトリ表示 ──
   const lod2Disabled = !hasLod2 ? 'disabled title="このビルはLOD2データなし"' : '';
-
-  document.getElementById('detail-body').innerHTML = `
-    <div>${attrsHtml}</div>
-
+  const lodHtml = `
+    <div class="section-title">ジオメトリ表示</div>
     <div class="lod-section">
-      <div class="lod-title">ジオメトリ表示</div>
       <div class="lod-buttons">
         <button class="lod-btn" id="lod1-btn" onclick="toggleLod1()">LOD1</button>
         <button class="lod-btn" id="lod2-btn" onclick="toggleLod2()" ${lod2Disabled}>LOD2</button>
@@ -786,12 +765,16 @@ function renderDetailPanel(data) {
         <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>屋根 Roof</div>
         <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>壁 Wall</div>
       </div>
-    </div>
+      <div style="margin-top:8px; font-size:0.72rem; color:#94a3b8; line-height:1.5">
+        ${hasLod2 ? 'LOD2: 壁・屋根・地面の面データあり' : 'LOD2データなし（LOD1のみ）'}
+      </div>
+    </div>`;
 
-    <div style="margin-top:16px; font-size:0.72rem; color:#94a3b8; line-height:1.5">
-      ${hasLod2 ? 'LOD2: 壁・屋根・地面の面データあり' : 'LOD2データなし（LOD1のみ）'}
-    </div>
-  `;
+  // ── Section 4: ID ──
+  const idHtml = '<div class="section-title">ID</div>' + attrRow('GML ID', data.gmlid);
+
+  document.getElementById('detail-body').innerHTML =
+    basicHtml + genericHtml + lodHtml + idHtml;
 
   // Store data for LOD toggle
   window._currentBuilding = data;
@@ -807,8 +790,10 @@ function toggleLod1() {
 
   if (lod1Active) {
     map.getSource('selected-lod1').setData(window._currentBuilding.lod1);
+    map.easeTo({ pitch: 45, bearing: -15, duration: 500 });
   } else {
     map.getSource('selected-lod1').setData({ type: 'FeatureCollection', features: [] });
+    if (!lod2Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
   }
 }
 
@@ -820,13 +805,53 @@ function toggleLod2() {
   btn.classList.toggle('active', lod2Active);
   document.getElementById('lod-legend').style.display = lod2Active ? 'block' : 'none';
 
-  const lod2 = window._currentBuilding.lod2;
   if (lod2Active) {
-    map.getSource('selected-lod2-wall').setData(lod2.wall);
-    map.getSource('selected-lod2-roof').setData(lod2.roof);
-    map.getSource('selected-lod2-ground').setData(lod2.ground);
+    const lod2 = window._currentBuilding.lod2;
+    // Render LOD2 thematic surfaces as true 3D polygons via deck.gl.
+    // Coordinates from the backend include Z (meters), so each vertex is
+    // placed at its actual 3D position — walls render as vertical planes,
+    // roof/ground as horizontal faces at their correct elevation.
+    deckOverlay.setProps({
+      layers: [
+        new deck.PolygonLayer({
+          id: 'lod2-ground',
+          data: lod2.ground.features,
+          getPolygon: f => f.geometry.coordinates[0],
+          getFillColor: [76, 175, 80, 180],
+          getLineColor: [76, 175, 80, 255],
+          extruded: false,
+          stroked: true,
+          lineWidthMinPixels: 1,
+          pickable: false,
+        }),
+        new deck.PolygonLayer({
+          id: 'lod2-roof',
+          data: lod2.roof.features,
+          getPolygon: f => f.geometry.coordinates[0],
+          getFillColor: [33, 150, 243, 200],
+          getLineColor: [33, 150, 243, 255],
+          extruded: false,
+          stroked: true,
+          lineWidthMinPixels: 1,
+          pickable: false,
+        }),
+        new deck.PolygonLayer({
+          id: 'lod2-wall',
+          data: lod2.wall.features,
+          getPolygon: f => f.geometry.coordinates[0],
+          getFillColor: [255, 152, 0, 160],
+          getLineColor: [255, 109, 0, 220],
+          extruded: false,
+          stroked: true,
+          lineWidthMinPixels: 0.5,
+          pickable: false,
+        }),
+      ],
+    });
+    map.easeTo({ pitch: 45, bearing: -15, duration: 500 });
   } else {
     clearLodLayers(/* keepLod1 */ true);
+    if (!lod1Active) map.easeTo({ pitch: 0, bearing: 0, duration: 500 });
   }
 }
 
@@ -835,9 +860,12 @@ function clearLodLayers(keepLod1 = false) {
   if (!keepLod1) {
     map.getSource('selected-lod1')?.setData(empty);
   }
+  // MapLibre LOD2 sources (kept for compatibility; data no longer set by toggleLod2)
   map.getSource('selected-lod2-wall')?.setData(empty);
   map.getSource('selected-lod2-roof')?.setData(empty);
   map.getSource('selected-lod2-ground')?.setData(empty);
+  // Clear deck.gl LOD2 layers
+  if (deckOverlay) deckOverlay.setProps({ layers: [] });
 }
 
 // ─────────────────────────────────────────────
