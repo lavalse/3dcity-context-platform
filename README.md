@@ -6,19 +6,24 @@ A prototype that lets Tokyo Taito-ku (台東区) city staff ask natural language
 
 ## What It Does
 
-City staff type a question in natural language (Japanese or English). The system generates SQL using Claude AI, shows the user the SQL for review, executes it against a 3DCityDB database loaded with Taito-ku PLATEAU CityGML data, and returns results.
+The app has three tabs:
+
+- **クエリ / Query** — Type a question; Claude generates SQL, shows it for review, executes it, and returns tabular results.
+- **チャット / Chat** — Conversational interface powered by Claude's agentic tool-use loop. Claude autonomously runs one or more SQL queries, interprets results, and answers in Japanese. Multi-turn conversation with history.
+- **地図 / Map** — MapLibre GL JS map with MVT building footprints and themed layers (land use, roads, flood zones). Click a building to see its attributes and 3D LOD2 surfaces.
 
 Example questions:
-- 台東区で1981年以前に建てられた木造建物は何棟ありますか？
-- How many buildings are in flood hazard zones along the Sumida River?
+- 台東区で10階以上のビルは何棟？
+- 浸水区域と重なる住宅系の建物を教えて
 - Show me buildings over 31 meters tall with their construction year.
 
 ## Stack
 
 - **Database**: PostgreSQL 15 + PostGIS + [3DCityDB v4](https://github.com/3dcitydb/3dcitydb)
 - **Data**: Tokyo Taito-ku 2024 PLATEAU CityGML (CC BY 4.0)
-- **Backend**: Python 3.12 + FastAPI + asyncpg + Anthropic Claude API
-- **Frontend**: Plain HTML/CSS/JS (no build step)
+- **Backend**: Python 3.12 + FastAPI + asyncpg + Anthropic Claude API (claude-sonnet-4-6)
+- **Tiles**: [Martin](https://github.com/maplibre/martin) MVT tile server
+- **Frontend**: Plain HTML/CSS/JS + MapLibre GL JS + deck.gl (no build step)
 - **Infrastructure**: Docker Compose
 
 ## Quick Start
@@ -33,6 +38,26 @@ docker compose up -d        # Start full stack
 open http://localhost:3000
 ```
 
+## Backend API
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/health` | DB ping + LLM mode status |
+| `POST /api/query` | Single-turn NL-to-SQL (placeholder or Claude) |
+| `POST /api/chat` | Streaming SSE chat with agentic tool-use loop |
+| `GET /api/buildings/{gmlid}` | Building attributes + LOD1/LOD2 geometry |
+
+## Chat Endpoint — How It Works
+
+`POST /api/chat` accepts a list of messages and streams [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events):
+
+- Claude drives the conversation, calling `execute_sql` autonomously (up to 4 rounds)
+- Auto-retries on empty results or SQL errors
+- Final round streams Japanese natural-language interpretation token by token
+- Events: `thinking`, `sql`, `executing`, `results`, `token`, `error`, `done`
+
+Requires `ANTHROPIC_API_KEY` in `.env`.
+
 ## Documentation
 
 | Doc | Contents |
@@ -42,6 +67,12 @@ open http://localhost:3000
 | [docs/3dcitydb-v4-schema.md](docs/3dcitydb-v4-schema.md) | Key DB tables, columns, query patterns |
 | [docs/setup.md](docs/setup.md) | Installation, data import, troubleshooting |
 | [docs/query-examples.md](docs/query-examples.md) | Sample NL queries and their SQL |
+| [docs/taito-ku-data-report.md](docs/taito-ku-data-report.md) | Data statistics, attribute coverage, known limitations |
+
+## pgAdmin
+
+http://localhost:5050 — email: `admin@citydb.local` / password: `admin`
+Server connection password: `citydb`
 
 ## License
 
