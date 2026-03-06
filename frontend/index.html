@@ -596,7 +596,7 @@ const MAP_LAYERS = [
   { id: 'buildings',     label: '建物',     label_en: 'Buildings',   color: '#FF9800', visible: true,  sourceLayer: 'building_footprints',   clickable: 'building' },
   { id: 'land-use',      label: '土地利用', label_en: 'Land Use',    color: '#F4A261', visible: false, sourceLayer: 'land_use_footprints',   clickable: 'feature'  },
   { id: 'roads',         label: '道路',     label_en: 'Roads',       color: '#78909C', visible: false, sourceLayer: 'road_footprints',       clickable: 'feature'  },
-  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: true,  sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
+  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: false, sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
 ];
 
 // ── Land use class colors & labels (Common_landUseType v3.2) ──
@@ -1010,13 +1010,13 @@ function initMap() {
     map.addLayer({
       id: 'flood-zones-fill', type: 'fill', source: 'flood-zones',
       'source-layer': 'flood_zone_footprints',
-      layout: { visibility: 'visible' },
+      layout: { visibility: 'none' },
       paint: { 'fill-color': '#1565C0', 'fill-opacity': 0.3 },
     });
     map.addLayer({
       id: 'flood-zones-outline', type: 'line', source: 'flood-zones',
       'source-layer': 'flood_zone_footprints',
-      layout: { visibility: 'visible' },
+      layout: { visibility: 'none' },
       paint: { 'line-color': '#0D47A1', 'line-width': 0.5 },
     });
 
