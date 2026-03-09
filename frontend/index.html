@@ -248,6 +248,8 @@
       overflow: hidden;
       flex-shrink: 0;
     }
+    #export-btn:not([disabled]) { opacity: 1 !important; }
+    #export-btn:not([disabled]):hover { background: #e55a00 !important; }
     .detail-header {
       padding: 14px 16px;
       background: #1a3a5c;
@@ -579,10 +581,11 @@
   <div id="map-container">
     <div id="map"></div>
     <div id="selection-toolbar">
-      <button class="sel-btn active" id="sel-normal-btn" onclick="setSelectionMode('normal')">クリック</button>
-      <button class="sel-btn"        id="sel-box-btn"    onclick="setSelectionMode('box')">ボックス</button>
-      <button class="sel-btn"        id="sel-poly-btn"   onclick="setSelectionMode('polygon')">ポリゴン</button>
-      <button class="sel-btn" onclick="clearSelection()" style="color:#dc2626">クリア</button>
+      <button class="sel-btn active" id="sel-normal-btn" onclick="setSelectionMode('normal')" title="建物・地物をクリックして詳細表示">👁 閲覧</button>
+      <div style="width:1px;background:#e2e8f0;margin:0 4px;align-self:stretch"></div>
+      <button class="sel-btn"        id="sel-box-btn"    onclick="setSelectionMode('box')" title="ドラッグで矩形選択 → エクスポート">□ ボックス</button>
+      <button class="sel-btn"        id="sel-poly-btn"   onclick="setSelectionMode('polygon')" title="クリックで多角形選択 → エクスポート">⬡ ポリゴン</button>
+      <button class="sel-btn" onclick="clearSelection()" style="color:#dc2626" title="選択をクリア">✕ クリア</button>
     </div>
     <div id="rubber-band"></div>
     <div id="layer-panel">
@@ -603,6 +606,12 @@
       <div class="detail-empty">
         地図上の建物をクリックすると<br>詳細情報が表示されます
       </div>
+    </div>
+    <div id="detail-footer" style="padding:12px 16px;border-top:1px solid #2a4a6b;flex-shrink:0">
+      <button id="export-btn" onclick="exportGeoJSON()" disabled
+        style="width:100%;padding:8px;background:#ff6600;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.875rem;opacity:0.5">
+        ⬇ GeoJSON
+      </button>
     </div>
   </div>
 </div>
@@ -916,6 +925,16 @@ const buildingCache = new Map();  // persistent fetch cache, max 200 entries
 const drawState = { vertices: [] };          // polygon draw
 const boxState  = { active: false, startPixel: null, div: null };  // box draw
 
+// Selection state for non-building overlay layers
+const otherSel = { 'land-use': null, 'roads': null, 'flood-zones': null };
+const otherHov = { 'land-use': null, 'roads': null, 'flood-zones': null };
+const layerKey  = { 'land-use-fill': 'land-use', 'roads-fill': 'roads', 'flood-zones-fill': 'flood-zones' };
+
+// Export selection: non-building gmlid → {type, key}
+const exportSelection = new Map();
+// Map layer key → export type string for POST /api/export
+const LAYER_TO_TYPE = { 'land-use': 'land_use', 'roads': 'road', 'flood-zones': 'flood_zone' };
+
 function initMap() {
   map = new maplibregl.Map({
     container: 'map',
@@ -1057,6 +1076,32 @@ function initMap() {
       paint: { 'line-color': '#0D47A1', 'line-width': 0.5 },
     });
 
+    // Selected + hover highlight layers for land-use, roads, flood-zones
+    [
+      { key: 'land-use',    sl: 'land_use_footprints'   },
+      { key: 'roads',       sl: 'road_footprints'        },
+      { key: 'flood-zones', sl: 'flood_zone_footprints'  },
+    ].forEach(({ key, sl }) => {
+      map.addLayer({
+        id: `${key}-selected`, type: 'line', source: key,
+        'source-layer': sl,
+        filter: ['==', 'gmlid', ''],
+        paint: { 'line-color': '#ff6600', 'line-width': 3 },
+      });
+      map.addLayer({
+        id: `${key}-selected-fill`, type: 'fill', source: key,
+        'source-layer': sl,
+        filter: ['==', 'gmlid', ''],
+        paint: { 'fill-color': '#ff6600', 'fill-opacity': 0.25 },
+      });
+      map.addLayer({
+        id: `${key}-hover`, type: 'fill', source: key,
+        'source-layer': sl,
+        filter: ['==', 'gmlid', ''],
+        paint: { 'fill-color': 'rgba(255,255,255,0.25)' },
+      });
+    });
+
     // Polygon draw preview layers (after buildings-outline, before buildings-selected)
     map.addLayer({ id: 'draw-polygon-fill', type: 'fill', source: 'draw-polygon',
       paint: { 'fill-color': '#1a3a5c', 'fill-opacity': 0.15 } });
@@ -1072,7 +1117,27 @@ function initMap() {
       source: 'buildings',
       'source-layer': 'building_footprints',
       filter: ['==', 'gmlid', ''],
-      paint: { 'line-color': '#ffffff', 'line-width': 3 },
+      paint: { 'line-color': '#ff6600', 'line-width': 3 },
+    });
+
+    // Selected building fill tint
+    map.addLayer({
+      id: 'buildings-selected-fill',
+      type: 'fill',
+      source: 'buildings',
+      'source-layer': 'building_footprints',
+      filter: ['==', 'gmlid', ''],
+      paint: { 'fill-color': '#ff6600', 'fill-opacity': 0.25 },
+    });
+
+    // Building hover fill tint
+    map.addLayer({
+      id: 'buildings-hover',
+      type: 'fill',
+      source: 'buildings',
+      'source-layer': 'building_footprints',
+      filter: ['==', 'gmlid', ''],
+      paint: { 'fill-color': 'rgba(255,255,255,0.25)' },
     });
 
     // LOD1 — 3D extrusion of building footprint
@@ -1152,11 +1217,35 @@ function initMap() {
       const { x: sx, y: sy } = boxState.startPixel;
       const ex = e.offsetX, ey = e.offsetY;
       if (Math.abs(ex - sx) < 5 || Math.abs(ey - sy) < 5) return;  // degenerate
+
+      // Collect all visible fill layers
+      const visibleFillLayers = ['buildings-fill'];
+      ['land-use-fill', 'roads-fill', 'flood-zones-fill'].forEach(id => {
+        try { if (map.getLayoutProperty(id, 'visibility') === 'visible') visibleFillLayers.push(id); } catch(e) {}
+      });
+
       const features = map.queryRenderedFeatures(
         [[Math.min(sx, ex), Math.min(sy, ey)], [Math.max(sx, ex), Math.max(sy, ey)]],
-        { layers: ['buildings-fill'] }
+        { layers: visibleFillLayers }
       );
-      applySelection([...new Set(features.map(f => f.properties.gmlid))]);
+
+      const bldgGmlids = [...new Set(
+        features.filter(f => f.layer.id === 'buildings-fill').map(f => f.properties.gmlid)
+      )];
+      const otherFeatures = features.filter(f => f.layer.id !== 'buildings-fill');
+
+      clearExportSelection();
+      applySelection(bldgGmlids);
+
+      otherFeatures.forEach(f => {
+        const key = layerKey[f.layer.id];
+        if (key) exportSelection.set(f.properties.gmlid, { type: LAYER_TO_TYPE[key], key });
+      });
+      updateNonBuildingFilters();
+
+      if (bldgGmlids.length === 0 && otherFeatures.length > 0) {
+        showExportPanel();
+      }
     });
 
     // ── Polygon-draw event listeners ──
@@ -1184,11 +1273,18 @@ function initMap() {
       applySelection([e.features[0].properties.gmlid]);
     });
 
-    map.on('mouseenter', 'buildings-fill', () => {
-      if (selection.mode === 'normal') map.getCanvas().style.cursor = 'pointer';
+    let hoveredBldg = null;
+    map.on('mouseenter', 'buildings-fill', e => {
+      if (selection.mode !== 'normal') return;
+      map.getCanvas().style.cursor = 'pointer';
+      hoveredBldg = e.features[0].properties.gmlid;
+      map.setFilter('buildings-hover', ['==', 'gmlid', hoveredBldg]);
     });
     map.on('mouseleave', 'buildings-fill', () => {
-      if (selection.mode === 'normal') map.getCanvas().style.cursor = '';
+      if (selection.mode !== 'normal') return;
+      map.getCanvas().style.cursor = '';
+      hoveredBldg = null;
+      map.setFilter('buildings-hover', ['==', 'gmlid', '']);
     });
 
     // Non-building feature click handlers
@@ -1196,6 +1292,16 @@ function initMap() {
       map.on('click', layerId, async e => {
         if (selection.mode !== 'normal') return;
         const gmlid = e.features[0].properties.gmlid;
+        const key = layerKey[layerId];
+
+        // Clear all selections, then show this single feature
+        applySelection([]);
+        clearExportSelection();
+
+        // Register this feature in exportSelection
+        exportSelection.set(gmlid, { type: LAYER_TO_TYPE[key], key });
+        updateNonBuildingFilters();
+
         document.getElementById('detail-header').textContent = '地物詳細 / Feature Detail';
         document.getElementById('detail-body').innerHTML = '<div class="spinner">Loading…</div>';
         try {
@@ -1207,14 +1313,41 @@ function initMap() {
           document.getElementById('detail-body').innerHTML =
             `<div class="error-card" style="margin:16px">エラー: ${escHtml(err.message)}</div>`;
         }
+        refreshExportButton();
       });
 
-      map.on('mouseenter', layerId, () => {
-        if (selection.mode === 'normal') map.getCanvas().style.cursor = 'pointer';
+      map.on('mouseenter', layerId, e => {
+        if (selection.mode !== 'normal') return;
+        map.getCanvas().style.cursor = 'pointer';
+        const key = layerKey[layerId];
+        const gmlid = e.features[0].properties.gmlid;
+        otherHov[key] = gmlid;
+        map.setFilter(`${key}-hover`, ['==', 'gmlid', gmlid]);
       });
       map.on('mouseleave', layerId, () => {
-        if (selection.mode === 'normal') map.getCanvas().style.cursor = '';
+        if (selection.mode !== 'normal') return;
+        map.getCanvas().style.cursor = '';
+        const key = layerKey[layerId];
+        otherHov[key] = null;
+        map.setFilter(`${key}-hover`, ['==', 'gmlid', '']);
       });
+    });
+
+    // Click on empty space clears non-building highlights
+    map.on('click', e => {
+      if (selection.mode !== 'normal') return;
+      const hit = map.queryRenderedFeatures(e.point, {
+        layers: ['buildings-fill', 'land-use-fill', 'roads-fill', 'flood-zones-fill'],
+      });
+      if (hit.length === 0) {
+        Object.keys(otherSel).forEach(key => {
+          otherSel[key] = null;
+          map.setFilter(`${key}-selected`, ['==', 'gmlid', '']);
+          map.setFilter(`${key}-selected-fill`, ['==', 'gmlid', '']);
+        });
+        clearExportSelection();
+        refreshExportButton();
+      }
     });
 
     // Build layer toggle panel
@@ -1262,13 +1395,18 @@ async function applySelection(gmlids) {
     ? ['==', 'gmlid', '']
     : ['in', ['get', 'gmlid'], ['literal', gmlids]];
   map.setFilter('buildings-selected', filter);
+  map.setFilter('buildings-selected-fill', filter);
 
   clearLodLayers();
 
   if (gmlids.length === 0) {
-    document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
-    document.getElementById('detail-body').innerHTML =
-      '<div class="detail-empty">地図上の建物をクリックすると<br>詳細情報が表示されます</div>';
+    // Only show empty state if exportSelection is also empty
+    if (exportSelection.size === 0) {
+      document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
+      document.getElementById('detail-body').innerHTML =
+        '<div class="detail-empty">地図上の建物をクリックすると<br>詳細情報が表示されます</div>';
+    }
+    refreshExportButton();
     return;
   }
 
@@ -1307,6 +1445,20 @@ async function fetchBuilding(gmlid) {
 // ── Merge feature collections from multiple API responses ──
 function mergeFeatureCollections(responses, accessor) {
   return { type: 'FeatureCollection', features: responses.flatMap(r => accessor(r).features) };
+}
+
+// ── Non-building selection summary banner ──
+function renderNonBuildingSummary() {
+  if (exportSelection.size === 0) return '';
+  const counts = {};
+  for (const { key } of exportSelection.values()) counts[key] = (counts[key] || 0) + 1;
+  const TYPE_LABELS = { 'land-use': '土地利用', 'roads': '道路', 'flood-zones': '浸水区域' };
+  const parts = Object.entries(counts)
+    .map(([k, n]) => `${TYPE_LABELS[k] || k} ${n}件`)
+    .join('、');
+  return `<div style="margin-bottom:12px;padding:8px 10px;background:#fff3e0;border-left:3px solid #ff6600;border-radius:4px;font-size:0.78rem;color:#c45500">
+    その他選択中: ${parts}
+  </div>`;
 }
 
 // ── Render multi-building selection panel ──
@@ -1363,7 +1515,8 @@ function renderMultiSelectPanel(tooMany, total) {
   }
 
   document.getElementById('detail-header').textContent = `${values.length}棟 選択中`;
-  document.getElementById('detail-body').innerHTML = html;
+  document.getElementById('detail-body').innerHTML = renderNonBuildingSummary() + html;
+  refreshExportButton();
 }
 
 // ── Render single-building attribute panel (shared logic) ──
@@ -1423,7 +1576,8 @@ function renderDetailPanelInto(data, headerEl, bodyEl, showLod) {
   const idHtml = '<div class="section-title">ID</div>' + attrRow('GML ID', data.gmlid);
 
   document.getElementById(bodyEl).innerHTML =
-    basicHtml + genericHtml + lodHtml + idHtml;
+    renderNonBuildingSummary() + basicHtml + genericHtml + lodHtml + idHtml;
+  if (bodyEl === 'detail-body') refreshExportButton();
 }
 
 function renderDetailPanel(data) {
@@ -1618,6 +1772,8 @@ function clearSelection() {
   document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
   document.getElementById('detail-body').innerHTML =
     '<div class="detail-empty">地図上の建物をクリックすると<br>詳細情報が表示されます</div>';
+  clearExportSelection();
+  refreshExportButton();
 }
 
 // ── Cancel box select (cleanup rubber-band) ──
@@ -1656,14 +1812,23 @@ function finishPolygonDraw() {
   const verts = drawState.vertices;
   const poly = turf.polygon([[...verts, verts[0]]]);
 
-  const renderedFeatures = map.queryRenderedFeatures({ layers: ['buildings-fill'] });
-  const matchedGmlids = [];
+  // Collect all visible fill layers
+  const visibleFillLayers = ['buildings-fill'];
+  ['land-use-fill', 'roads-fill', 'flood-zones-fill'].forEach(id => {
+    try { if (map.getLayoutProperty(id, 'visibility') === 'visible') visibleFillLayers.push(id); } catch(e) {}
+  });
+
+  const renderedFeatures = map.queryRenderedFeatures({ layers: visibleFillLayers });
+
+  const matchedBldgGmlids = [];
+  const matchedOther = [];
   const seen = new Set();
 
   renderedFeatures.forEach(f => {
     const gmlid = f.properties.gmlid;
-    if (seen.has(gmlid)) return;
-    seen.add(gmlid);
+    const dedupKey = f.layer.id + '|' + gmlid;
+    if (seen.has(dedupKey)) return;
+    seen.add(dedupKey);
 
     const ring = f.geometry.type === 'MultiPolygon'
       ? f.geometry.coordinates[0][0]
@@ -1672,12 +1837,28 @@ function finishPolygonDraw() {
     const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
 
     if (turf.booleanPointInPolygon(turf.point([cx, cy]), poly)) {
-      matchedGmlids.push(gmlid);
+      if (f.layer.id === 'buildings-fill') {
+        matchedBldgGmlids.push(gmlid);
+      } else {
+        matchedOther.push(f);
+      }
     }
   });
 
   cancelPolygonDraw();
-  if (matchedGmlids.length > 0) applySelection(matchedGmlids);
+
+  clearExportSelection();
+  applySelection(matchedBldgGmlids);
+
+  matchedOther.forEach(f => {
+    const key = layerKey[f.layer.id];
+    if (key) exportSelection.set(f.properties.gmlid, { type: LAYER_TO_TYPE[key], key });
+  });
+  updateNonBuildingFilters();
+
+  if (matchedBldgGmlids.length === 0 && matchedOther.length > 0) {
+    showExportPanel();
+  }
 }
 
 function cancelPolygonDraw() {
@@ -1814,6 +1995,86 @@ function renderFeaturePanel(data) {
   html += '<div class="section-title">種別 / Type</div>' + attrRow('Feature Type', data.feature_type);
 
   document.getElementById('detail-body').innerHTML = html;
+  refreshExportButton();
+}
+
+// ── Export selection helpers ──
+
+function clearExportSelection() {
+  exportSelection.clear();
+  ['land-use', 'roads', 'flood-zones'].forEach(key => {
+    if (!map) return;
+    try { map.setFilter(`${key}-selected`,      ['==', 'gmlid', '']); } catch(e) {}
+    try { map.setFilter(`${key}-selected-fill`, ['==', 'gmlid', '']); } catch(e) {}
+  });
+}
+
+function updateNonBuildingFilters() {
+  const byKey = {};
+  for (const [gmlid, { key }] of exportSelection) {
+    (byKey[key] = byKey[key] || []).push(gmlid);
+  }
+  ['land-use', 'roads', 'flood-zones'].forEach(key => {
+    const ids = byKey[key] || [];
+    const f = ids.length === 0
+      ? ['==', 'gmlid', '']
+      : ['in', ['get', 'gmlid'], ['literal', ids]];
+    try { map.setFilter(`${key}-selected`,      f); } catch(e) {}
+    try { map.setFilter(`${key}-selected-fill`, f); } catch(e) {}
+  });
+}
+
+function refreshExportButton() {
+  const btn = document.getElementById('export-btn');
+  if (!btn) return;
+  const total = selection.gmlids.size + exportSelection.size;
+  btn.disabled = total === 0;
+  btn.style.opacity = total === 0 ? '0.5' : '1';
+  btn.textContent = total > 0 ? `⬇ GeoJSON (${total}件)` : '⬇ GeoJSON';
+}
+
+function showExportPanel() {
+  const counts = {};
+  for (const { key } of exportSelection.values()) counts[key] = (counts[key] || 0) + 1;
+  const TYPE_LABELS = { 'land-use': '土地利用', 'roads': '道路', 'flood-zones': '浸水区域' };
+  const rows = Object.entries(counts)
+    .map(([k, n]) => `<div class="attr-row"><span class="attr-label">${TYPE_LABELS[k] || k}</span><span class="attr-value">${n}件</span></div>`)
+    .join('');
+  document.getElementById('detail-header').textContent = `${exportSelection.size}件 選択中`;
+  document.getElementById('detail-body').innerHTML =
+    `<div class="section-title">選択内訳</div>${rows}`;
+  refreshExportButton();
+}
+
+async function exportGeoJSON() {
+  const items = [
+    ...[...selection.gmlids].map(g => ({ gmlid: g, type: 'building' })),
+    ...[...exportSelection.entries()].map(([g, { type }]) => ({ gmlid: g, type })),
+  ];
+  if (items.length === 0) return;
+
+  const btn = document.getElementById('export-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Exporting…';
+
+  try {
+    const res = await fetch(`${API}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const fc = await res.json();
+    const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'export.geojson'; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Export エラー: ${err.message}`);
+  } finally {
+    refreshExportButton();
+  }
 }
 
 // ─────────────────────────────────────────────
