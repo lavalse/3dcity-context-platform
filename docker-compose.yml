@@ -51,6 +51,7 @@ services:
   backend:
     build: ./backend
     container_name: 3dcity-backend
+    restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
