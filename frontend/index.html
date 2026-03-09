@@ -1749,10 +1749,10 @@ async function exportCesium3DBatch(format) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
-    const ext  = format === 'geojson3d' ? 'geojson' : 'json';
+    const filename = format === 'geojson3d' ? `batch_${gmlids.length}bldg.geojson` : `batch_${gmlids.length}bldg.city.json`;
     const url  = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `batch_${gmlids.length}bldg.${ext}`;
+    a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (err) { alert(`Export エラー: ${err.message}`); }
@@ -2255,6 +2255,8 @@ function renderFeaturePanel(data) {
 // ── Export selection helpers ──
 
 function clearExportSelection() {
+  Object.keys(otherSel).forEach(k => { otherSel[k] = null; });
+  Object.keys(otherHov).forEach(k => { otherHov[k] = null; });
   exportSelection.clear();
   ['land-use', 'roads', 'flood-zones'].forEach(key => {
     if (!map) return;
