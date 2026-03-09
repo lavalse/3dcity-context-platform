@@ -15,6 +15,10 @@
   <!-- Turf.js — polygon point-in-polygon test for polygon selection mode -->
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
+  <!-- CesiumJS — 3D Tiles viewer for PLATEAU LOD2 3D view tab -->
+  <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -216,9 +220,23 @@
 
     /* ── Map tab ── */
     #tab-map { flex-direction: row; }
+    #tab-3d  { flex-direction: row; }
 
     #map-container { flex: 1; position: relative; }
     #map { width: 100%; height: 100%; }
+
+    /* ── Cesium container ── */
+    #cesium-container { flex: 1; position: relative; overflow: hidden; }
+    .cesium-widget-credits { display: none !important; }
+    #detail-panel-3d {
+      width: 300px;
+      background: white;
+      border-left: 1px solid #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
 
     /* ── Detail panel ── */
     #detail-panel {
@@ -496,6 +514,7 @@
   <button class="tab-btn active" id="tab-btn-query" onclick="switchTab('query')">クエリ / Query</button>
   <button class="tab-btn"        id="tab-btn-chat"  onclick="switchTab('chat')">チャット / Chat</button>
   <button class="tab-btn"        id="tab-btn-map"   onclick="switchTab('map')">地図 / Map</button>
+  <button class="tab-btn"        id="tab-btn-3d"    onclick="switchTab('3d')">3Dビュー / 3D View</button>
 </nav>
 
 <!-- ══ Tab 1: Query ══ -->
@@ -588,6 +607,17 @@
   </div>
 </div>
 
+<!-- ══ Tab 4: 3D View ══ -->
+<div class="tab-pane" id="tab-3d" style="flex-direction: row;">
+  <div id="cesium-container"></div>
+  <div id="detail-panel-3d">
+    <div class="detail-header" id="detail-header-3d">建物詳細 / Building Detail</div>
+    <div class="detail-body" id="detail-body-3d">
+      <div class="detail-empty">3Dビューで建物をクリックすると<br>詳細情報が表示されます</div>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '/api';
 
@@ -596,7 +626,7 @@ const MAP_LAYERS = [
   { id: 'buildings',     label: '建物',     label_en: 'Buildings',   color: '#FF9800', visible: true,  sourceLayer: 'building_footprints',   clickable: 'building' },
   { id: 'land-use',      label: '土地利用', label_en: 'Land Use',    color: '#F4A261', visible: false, sourceLayer: 'land_use_footprints',   clickable: 'feature'  },
   { id: 'roads',         label: '道路',     label_en: 'Roads',       color: '#78909C', visible: false, sourceLayer: 'road_footprints',       clickable: 'feature'  },
-  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: true,  sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
+  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: false, sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
 ];
 
 // ── Land use class colors & labels (Common_landUseType v3.2) ──
@@ -694,8 +724,11 @@ const USAGE_LABELS = {
   '461': '不明',
 };
 
+const PLATEAU_3DTILES_URL = 'https://assets.cms.plateau.reearth.io/assets/59/0fbb20-59cb-4ce5-9d12-2273ce72e6d2/13106_taito-ku_city_2024_citygml_1_op_bldg_3dtiles_13106_taito-ku_lod2_no_texture/tileset.json';
+
 // ── Tab switching ──
 let mapInitialized = false;
+let cesium3dInitialized = false;
 
 function switchTab(name) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
@@ -706,6 +739,10 @@ function switchTab(name) {
   if (name === 'map' && !mapInitialized) {
     initMap();
     mapInitialized = true;
+  }
+  if (name === '3d' && !cesium3dInitialized) {
+    initCesium3D();
+    cesium3dInitialized = true;
   }
 }
 
@@ -1010,13 +1047,13 @@ function initMap() {
     map.addLayer({
       id: 'flood-zones-fill', type: 'fill', source: 'flood-zones',
       'source-layer': 'flood_zone_footprints',
-      layout: { visibility: 'visible' },
+      layout: { visibility: 'none' },
       paint: { 'fill-color': '#1565C0', 'fill-opacity': 0.3 },
     });
     map.addLayer({
       id: 'flood-zones-outline', type: 'line', source: 'flood-zones',
       'source-layer': 'flood_zone_footprints',
-      layout: { visibility: 'visible' },
+      layout: { visibility: 'none' },
       paint: { 'line-color': '#0D47A1', 'line-width': 0.5 },
     });
 
@@ -1329,9 +1366,9 @@ function renderMultiSelectPanel(tooMany, total) {
   document.getElementById('detail-body').innerHTML = html;
 }
 
-// ── Render single-building attribute panel ──
-function renderDetailPanel(data) {
-  document.getElementById('detail-header').textContent = '建物詳細 / Building Detail';
+// ── Render single-building attribute panel (shared logic) ──
+function renderDetailPanelInto(data, headerEl, bodyEl, showLod) {
+  document.getElementById(headerEl).textContent = '建物詳細 / Building Detail';
   const a = data.attributes;
   const hasLod2 = a.has_lod2;
 
@@ -1360,30 +1397,126 @@ function renderDetailPanel(data) {
     ).join('');
   }
 
-  // ── Section 3: ジオメトリ表示 ──
-  const lod2Disabled = !hasLod2 ? 'disabled title="このビルはLOD2データなし"' : '';
-  const lodHtml = `
-    <div class="section-title">ジオメトリ表示</div>
-    <div class="lod-section">
-      <div class="lod-buttons">
-        <button class="lod-btn" id="lod1-btn" onclick="toggleLod1()">LOD1</button>
-        <button class="lod-btn" id="lod2-btn" onclick="toggleLod2()" ${lod2Disabled}>LOD2</button>
-      </div>
-      <div class="lod-legend" id="lod-legend" style="display:none">
-        <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>地面 Ground</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>屋根 Roof</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>壁 Wall</div>
-      </div>
-      <div style="margin-top:8px; font-size:0.72rem; color:#94a3b8; line-height:1.5">
-        ${hasLod2 ? 'LOD2: 壁・屋根・地面の面データあり' : 'LOD2データなし（LOD1のみ）'}
-      </div>
-    </div>`;
+  // ── Section 3: ジオメトリ表示 (Map tab only) ──
+  let lodHtml = '';
+  if (showLod) {
+    const lod2Disabled = !hasLod2 ? 'disabled title="このビルはLOD2データなし"' : '';
+    lodHtml = `
+      <div class="section-title">ジオメトリ表示</div>
+      <div class="lod-section">
+        <div class="lod-buttons">
+          <button class="lod-btn" id="lod1-btn" onclick="toggleLod1()">LOD1</button>
+          <button class="lod-btn" id="lod2-btn" onclick="toggleLod2()" ${lod2Disabled}>LOD2</button>
+        </div>
+        <div class="lod-legend" id="lod-legend" style="display:none">
+          <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>地面 Ground</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>屋根 Roof</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>壁 Wall</div>
+        </div>
+        <div style="margin-top:8px; font-size:0.72rem; color:#94a3b8; line-height:1.5">
+          ${hasLod2 ? 'LOD2: 壁・屋根・地面の面データあり' : 'LOD2データなし（LOD1のみ）'}
+        </div>
+      </div>`;
+  }
 
   // ── Section 4: ID ──
   const idHtml = '<div class="section-title">ID</div>' + attrRow('GML ID', data.gmlid);
 
-  document.getElementById('detail-body').innerHTML =
+  document.getElementById(bodyEl).innerHTML =
     basicHtml + genericHtml + lodHtml + idHtml;
+}
+
+function renderDetailPanel(data) {
+  renderDetailPanelInto(data, 'detail-header', 'detail-body', true);
+}
+
+function render3DDetailPanel(data) {
+  renderDetailPanelInto(data, 'detail-header-3d', 'detail-body-3d', false);
+}
+
+// ── Cesium 3D View ──
+async function initCesium3D() {
+  window.CESIUM_BASE_URL = 'https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/';
+  Cesium.Ion.defaultAccessToken = '';
+
+  const viewer = new Cesium.Viewer('cesium-container', {
+    baseLayerPicker: false, geocoder: false, homeButton: false,
+    sceneModePicker: false, navigationHelpButton: false,
+    animation: false, timeline: false, fullscreenButton: false,
+    infoBox: false, selectionIndicator: false,
+    terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+  });
+
+  // CartoDB Positron — minimal basemap, great contrast with warm buildings
+  viewer.imageryLayers.removeAll();
+  viewer.imageryLayers.addImageryProvider(
+    new Cesium.UrlTemplateImageryProvider({
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+      subdomains: ['a', 'b', 'c', 'd'],
+      credit: '© OpenStreetMap contributors, © CARTO',
+      maximumLevel: 19,
+    })
+  );
+
+  // Freeze time at 10:00 JST on summer solstice (good sun angle for Tokyo)
+  viewer.clock.currentTime = Cesium.JulianDate.fromDate(new Date('2024-06-21T01:00:00Z'));
+  viewer.clock.shouldAnimate = false;
+  viewer.scene.globe.enableLighting = true;
+  viewer.shadows = true;
+  viewer.terrainShadows = Cesium.ShadowMode.DISABLED;
+
+  // Load PLATEAU LOD2 3D Tiles
+  let tileset;
+  try {
+    tileset = await Cesium.Cesium3DTileset.fromUrl(PLATEAU_3DTILES_URL);
+    viewer.scene.primitives.add(tileset);
+    await viewer.zoomTo(tileset);
+  } catch (e) {
+    console.error('Failed to load PLATEAU 3D tileset:', e);
+    document.getElementById('detail-body-3d').innerHTML =
+      '<div class="detail-empty" style="color:#dc2626">タイルセットの読み込みに失敗しました</div>';
+    return;
+  }
+
+  let hoveredFeature  = null;
+  let selectedFeature = null;
+
+  // Hover: light sky-blue tint
+  viewer.screenSpaceEventHandler.setInputAction(movement => {
+    if (hoveredFeature && hoveredFeature !== selectedFeature) {
+      hoveredFeature.color = Cesium.Color.WHITE;
+    }
+    hoveredFeature = null;
+
+    const picked = viewer.scene.pick(movement.endPosition);
+    if (!Cesium.defined(picked) || !picked.getProperty) return;
+    if (picked === selectedFeature) return;
+
+    picked.color = new Cesium.Color(0.6, 0.85, 1.0, 1.0);
+    hoveredFeature = picked;
+  }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+  // Click: vivid amber + fetch attributes
+  viewer.screenSpaceEventHandler.setInputAction(movement => {
+    if (selectedFeature) { selectedFeature.color = Cesium.Color.WHITE; selectedFeature = null; }
+    if (hoveredFeature)  { hoveredFeature.color  = Cesium.Color.WHITE; hoveredFeature  = null; }
+
+    const picked = viewer.scene.pick(movement.position);
+    if (!Cesium.defined(picked) || !picked.getProperty) return;
+
+    const gmlid = picked.getProperty('gml_id') || picked.getProperty('buildingId');
+    if (!gmlid) return;
+
+    picked.color = new Cesium.Color(1.0, 0.6, 0.1, 1.0);
+    selectedFeature = picked;
+
+    fetchBuilding(gmlid)
+      .then(data => render3DDetailPanel(data))
+      .catch(() => {
+        document.getElementById('detail-body-3d').innerHTML =
+          '<div class="detail-empty">データ取得エラー</div>';
+      });
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 }
 
 // ── LOD toggles ──
