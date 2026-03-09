@@ -342,6 +342,24 @@
       pointer-events: none; display: none; z-index: 5;
     }
 
+    /* Cesium 3D toolbar */
+    #cesium-toolbar {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      display: flex; gap: 6px; background: white;
+      border-radius: 8px; padding: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    /* Transparent overlay captures mouse events in box mode, blocking Cesium's camera drag */
+    #cesium-box-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 6; display: none; cursor: crosshair;
+    }
+    #cesium-rubber-band {
+      position: absolute; border: 2px solid #1a3a5c;
+      background: rgba(26,58,92,0.1);
+      pointer-events: none; display: none; z-index: 7;
+    }
+
     /* Layer toggle panel */
     #layer-panel {
       position: absolute; bottom: 28px; left: 10px; z-index: 10;
@@ -618,11 +636,29 @@
 
 <!-- ══ Tab 4: 3D View ══ -->
 <div class="tab-pane" id="tab-3d" style="flex-direction: row;">
-  <div id="cesium-container"></div>
+  <div id="cesium-container">
+    <div id="cesium-toolbar">
+      <button class="sel-btn active" id="c3d-normal-btn" onclick="setCesium3DMode('normal')">👁 閲覧</button>
+      <button class="sel-btn"        id="c3d-box-btn"    onclick="setCesium3DMode('box')">□ ボックス</button>
+      <button class="sel-btn"        id="c3d-clear-btn"  onclick="clearCesium3DSelection()" style="display:none;color:#dc2626">✕ クリア</button>
+    </div>
+    <div id="cesium-box-overlay"></div>
+    <div id="cesium-rubber-band"></div>
+  </div>
   <div id="detail-panel-3d">
     <div class="detail-header" id="detail-header-3d">建物詳細 / Building Detail</div>
-    <div class="detail-body" id="detail-body-3d">
+    <div class="detail-body"   id="detail-body-3d">
       <div class="detail-empty">3Dビューで建物をクリックすると<br>詳細情報が表示されます</div>
+    </div>
+    <div id="detail-footer-3d" style="padding:12px 16px;border-top:1px solid #2a4a6b;flex-shrink:0;display:none">
+      <button id="export-3d-geojson-btn" onclick="exportCesium3DBatch('geojson3d')"
+        style="width:100%;padding:8px;background:#ff6600;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.875rem;margin-bottom:6px">
+        ⬇ GeoJSON 3D
+      </button>
+      <button id="export-3d-cityjson-btn" onclick="exportCesium3DBatch('cityjson')"
+        style="width:100%;padding:8px;background:#1a3a5c;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.875rem">
+        ⬇ CityJSON
+      </button>
     </div>
   </div>
 </div>
@@ -924,6 +960,19 @@ const buildingCache = new Map();  // persistent fetch cache, max 200 entries
 
 const drawState = { vertices: [] };          // polygon draw
 const boxState  = { active: false, startPixel: null, div: null };  // box draw
+
+// ── Cesium 3D multi-selection state ──
+const cesium3dState = {
+  mode: 'normal',              // 'normal' | 'box'
+  selectedGmlids: new Set(),
+  hoveredFeature: null,
+  tileset: null,
+  viewer: null,
+};
+const cesiumBoxState = { active: false, startPixel: null, div: null };
+let cesiumCtrlHeld = false;
+window.addEventListener('keydown', e => { if (e.key === 'Control') cesiumCtrlHeld = true; });
+window.addEventListener('keyup',   e => { if (e.key === 'Control') cesiumCtrlHeld = false; });
 
 // Selection state for non-building overlay layers
 const otherSel = { 'land-use': null, 'roads': null, 'flood-zones': null };
@@ -1586,6 +1635,138 @@ function renderDetailPanel(data) {
 
 function render3DDetailPanel(data) {
   renderDetailPanelInto(data, 'detail-header-3d', 'detail-body-3d', false);
+
+  // Append 3D export buttons
+  const bodyEl = document.getElementById('detail-body-3d');
+  const hasLod2 = data.attributes.has_lod2;
+  const gmlid = data.gmlid;
+
+  const section = document.createElement('div');
+  const disabledAttr = hasLod2 ? '' : 'disabled title="LOD2データなし"';
+  section.innerHTML = `
+    <div class="section-title">3Dエクスポート</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+      <button class="lod-btn" id="export-geojson3d-btn" ${disabledAttr}>GeoJSON 3D</button>
+      <button class="lod-btn" id="export-cityjson-btn" ${disabledAttr}>CityJSON</button>
+    </div>
+    ${!hasLod2 ? '<div style="margin-top:6px;font-size:0.72rem;color:#94a3b8">LOD2サーフェスデータなし</div>' : ''}
+  `;
+
+  if (hasLod2) {
+    section.querySelector('#export-geojson3d-btn').addEventListener('click', () => {
+      downloadBuildingExport(gmlid, 'geojson3d', `${gmlid}_lod2_3d.geojson`);
+    });
+    section.querySelector('#export-cityjson-btn').addEventListener('click', () => {
+      downloadBuildingExport(gmlid, 'cityjson', `${gmlid}.city.json`);
+    });
+  }
+  bodyEl.appendChild(section);
+}
+
+// ── Cesium 3D multi-selection helpers ──
+
+function rebuildCesium3DStyle() {
+  if (!cesium3dState.tileset) return;
+  const conditions = [...cesium3dState.selectedGmlids].map(id =>
+    [`\${gml_id} === '${id}'`, "color('rgba(255,153,26,1.0)')"]
+  );
+  conditions.push(["true", "color('white', 1.0)"]);
+  cesium3dState.tileset.style = new Cesium.Cesium3DTileStyle({ color: { conditions } });
+}
+
+async function render3DSelectionPanel() {
+  const count = cesium3dState.selectedGmlids.size;
+  document.getElementById('c3d-clear-btn').style.display = count > 0 ? '' : 'none';
+  document.getElementById('detail-footer-3d').style.display = count > 0 ? 'block' : 'none';
+  const header = document.getElementById('detail-header-3d');
+  const body   = document.getElementById('detail-body-3d');
+
+  if (count === 0) {
+    header.textContent = '建物詳細 / Building Detail';
+    body.innerHTML = '<div class="detail-empty">3Dビューで建物をクリックすると<br>詳細情報が表示されます</div>';
+    return;
+  }
+  if (count === 1) {
+    const [gmlid] = cesium3dState.selectedGmlids;
+    header.textContent = '建物詳細 / Building Detail';
+    body.innerHTML = '<div class="detail-empty">読み込み中…</div>';
+    try {
+      const data = await fetchBuilding(gmlid);
+      render3DDetailPanel(data);
+    } catch { body.innerHTML = '<div class="detail-empty">データ取得エラー</div>'; }
+    return;
+  }
+  // Multiple buildings — show summary (fetch up to 50 for stats)
+  header.textContent = `${count}棟 選択中`;
+  body.innerHTML = '<div class="detail-empty">読み込み中…</div>';
+  const toFetch = [...cesium3dState.selectedGmlids].slice(0, 50);
+  const results = await Promise.allSettled(toFetch.map(id => fetchBuilding(id)));
+  const loaded  = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+  const lod2n   = loaded.filter(d => d.attributes.has_lod2).length;
+  const heights = loaded.map(d => d.attributes.measured_height).filter(h => h != null && h > 0);
+  const avg     = heights.length ? (heights.reduce((a,b)=>a+b,0)/heights.length).toFixed(1) : null;
+  body.innerHTML = `
+    <div class="section-title">集計情報</div>
+    <div class="attr-row"><span class="attr-label">選択棟数</span><span class="attr-value">${count}棟</span></div>
+    <div class="attr-row"><span class="attr-label">LOD2あり</span><span class="attr-value">${lod2n}棟</span></div>
+    ${avg ? `<div class="attr-row"><span class="attr-label">平均高さ</span><span class="attr-value">${avg} m</span></div>` : ''}
+    ${count > 50 ? '<div style="font-size:0.72rem;color:#94a3b8;margin-top:8px">※ 最初の50棟のみ集計</div>' : ''}
+  `;
+}
+
+function clearCesium3DSelection() {
+  cesium3dState.selectedGmlids.clear();
+  rebuildCesium3DStyle();
+  render3DSelectionPanel();
+}
+
+function setCesium3DMode(mode) {
+  cesium3dState.mode = mode;
+  document.getElementById('c3d-normal-btn').classList.toggle('active', mode === 'normal');
+  document.getElementById('c3d-box-btn').classList.toggle('active', mode === 'box');
+  // Show overlay in box mode — it sits above the canvas and absorbs all mouse events,
+  // so Cesium's camera handler never sees them (no need to touch enableRotate).
+  document.getElementById('cesium-box-overlay').style.display = mode === 'box' ? 'block' : 'none';
+  // Also cancel any in-progress rubber band when switching back to normal
+  if (mode === 'normal') {
+    cesiumBoxState.active = false;
+    document.getElementById('cesium-rubber-band').style.display = 'none';
+  }
+}
+
+async function exportCesium3DBatch(format) {
+  const gmlids = [...cesium3dState.selectedGmlids];
+  if (!gmlids.length) return;
+  const btnId = format === 'geojson3d' ? 'export-3d-geojson-btn' : 'export-3d-cityjson-btn';
+  const btn = document.getElementById(btnId);
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Exporting…';
+  try {
+    const res = await fetch(`${API}/buildings/export/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gmlids, format }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const ext  = format === 'geojson3d' ? 'geojson' : 'json';
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `batch_${gmlids.length}bldg.${ext}`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) { alert(`Export エラー: ${err.message}`); }
+  finally { btn.disabled = false; btn.textContent = origText; }
+}
+
+function downloadBuildingExport(gmlid, format, filename) {
+  const url = `${API}/buildings/${encodeURIComponent(gmlid)}/export/${format}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // ── Cesium 3D View ──
@@ -1632,45 +1813,118 @@ async function initCesium3D() {
     return;
   }
 
-  let hoveredFeature  = null;
-  let selectedFeature = null;
+  cesium3dState.tileset = tileset;
+  cesium3dState.viewer  = viewer;
 
-  // Hover: light sky-blue tint
+  // Hover: light sky-blue tint; skip selected buildings
   viewer.screenSpaceEventHandler.setInputAction(movement => {
-    if (hoveredFeature && hoveredFeature !== selectedFeature) {
-      hoveredFeature.color = Cesium.Color.WHITE;
+    if (cesium3dState.hoveredFeature) {
+      const hId = cesium3dState.hoveredFeature.getProperty('gml_id');
+      if (!cesium3dState.selectedGmlids.has(hId))
+        cesium3dState.hoveredFeature.color = Cesium.Color.WHITE;
+      cesium3dState.hoveredFeature = null;
     }
-    hoveredFeature = null;
-
+    if (cesium3dState.mode === 'box') return;
     const picked = viewer.scene.pick(movement.endPosition);
     if (!Cesium.defined(picked) || !picked.getProperty) return;
-    if (picked === selectedFeature) return;
-
+    const gmlid = picked.getProperty('gml_id') || picked.getProperty('buildingId');
+    if (!gmlid || cesium3dState.selectedGmlids.has(gmlid)) return;
     picked.color = new Cesium.Color(0.6, 0.85, 1.0, 1.0);
-    hoveredFeature = picked;
+    cesium3dState.hoveredFeature = picked;
   }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-  // Click: vivid amber + fetch attributes
+  // Click: Ctrl = toggle, plain = replace selection
   viewer.screenSpaceEventHandler.setInputAction(movement => {
-    if (selectedFeature) { selectedFeature.color = Cesium.Color.WHITE; selectedFeature = null; }
-    if (hoveredFeature)  { hoveredFeature.color  = Cesium.Color.WHITE; hoveredFeature  = null; }
-
+    if (cesium3dState.mode !== 'normal') return;
     const picked = viewer.scene.pick(movement.position);
-    if (!Cesium.defined(picked) || !picked.getProperty) return;
-
+    if (!Cesium.defined(picked) || !picked.getProperty) {
+      if (!cesiumCtrlHeld) {
+        cesium3dState.selectedGmlids.clear();
+        rebuildCesium3DStyle();
+        render3DSelectionPanel();
+      }
+      return;
+    }
     const gmlid = picked.getProperty('gml_id') || picked.getProperty('buildingId');
     if (!gmlid) return;
-
-    picked.color = new Cesium.Color(1.0, 0.6, 0.1, 1.0);
-    selectedFeature = picked;
-
-    fetchBuilding(gmlid)
-      .then(data => render3DDetailPanel(data))
-      .catch(() => {
-        document.getElementById('detail-body-3d').innerHTML =
-          '<div class="detail-empty">データ取得エラー</div>';
-      });
+    if (cesiumCtrlHeld) {
+      cesium3dState.selectedGmlids.has(gmlid)
+        ? cesium3dState.selectedGmlids.delete(gmlid)
+        : cesium3dState.selectedGmlids.add(gmlid);
+    } else {
+      cesium3dState.selectedGmlids.clear();
+      cesium3dState.selectedGmlids.add(gmlid);
+    }
+    rebuildCesium3DStyle();
+    render3DSelectionPanel();
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  // Box selection via transparent overlay div (sits above canvas, blocks Cesium camera events)
+  const rb      = document.getElementById('cesium-rubber-band');
+  const overlay = document.getElementById('cesium-box-overlay');
+
+  overlay.addEventListener('mousedown', e => {
+    cesiumBoxState.active = true;
+    cesiumBoxState.startPixel = { x: e.offsetX, y: e.offsetY };
+    rb.style.left   = e.offsetX + 'px';
+    rb.style.top    = e.offsetY + 'px';
+    rb.style.width  = '0px';
+    rb.style.height = '0px';
+    rb.style.display = 'block';
+  });
+
+  overlay.addEventListener('mousemove', e => {
+    if (!cesiumBoxState.active) return;
+    const s = cesiumBoxState.startPixel;
+    const x = Math.min(e.offsetX, s.x);
+    const y = Math.min(e.offsetY, s.y);
+    rb.style.left   = x + 'px';
+    rb.style.top    = y + 'px';
+    rb.style.width  = Math.abs(e.offsetX - s.x) + 'px';
+    rb.style.height = Math.abs(e.offsetY - s.y) + 'px';
+  });
+
+  // Cancel rubber band if mouse leaves the overlay mid-drag
+  overlay.addEventListener('mouseleave', () => {
+    if (cesiumBoxState.active) {
+      cesiumBoxState.active = false;
+      rb.style.display = 'none';
+    }
+  });
+
+  overlay.addEventListener('mouseup', e => {
+    if (!cesiumBoxState.active) return;
+    cesiumBoxState.active = false;
+    rb.style.display = 'none';
+
+    const s = cesiumBoxState.startPixel;
+    const x0 = Math.min(s.x, e.offsetX);
+    const y0 = Math.min(s.y, e.offsetY);
+    const x1 = Math.max(s.x, e.offsetX);
+    const y1 = Math.max(s.y, e.offsetY);
+
+    // Ignore tiny drags (accidental click)
+    if ((x1 - x0) < 5 || (y1 - y0) < 5) return;
+
+    // Sample 14×14 grid across the drag rectangle, collect all feature gml_ids
+    const STEPS = 13;  // 14 points = indices 0..13
+    const foundGmlids = new Set();
+    for (let xi = 0; xi <= STEPS; xi++) {
+      for (let yi = 0; yi <= STEPS; yi++) {
+        const px = x0 + (x1 - x0) * xi / STEPS;
+        const py = y0 + (y1 - y0) * yi / STEPS;
+        const picked = viewer.scene.pick(new Cesium.Cartesian2(px, py));
+        if (picked && picked.getProperty) {
+          const id = picked.getProperty('gml_id') || picked.getProperty('buildingId');
+          if (id) foundGmlids.add(id);
+        }
+      }
+    }
+
+    foundGmlids.forEach(id => cesium3dState.selectedGmlids.add(id));
+    rebuildCesium3DStyle();
+    render3DSelectionPanel();
+  });
 }
 
 // ── LOD toggles ──
