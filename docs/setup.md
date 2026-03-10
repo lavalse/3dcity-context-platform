@@ -75,39 +75,56 @@ data/citygml/13106_taito-ku_city_2024_citygml_1_op/
     ├── bldg/       # Building GML files (split by mesh code)
     ├── tran/       # Road GML files
     ├── luse/       # Land use GML files
-    ├── fld/        # Flood hazard GML files
-    ├── urf/        # Urban planning zone GML files
+    ├── fld/        # River flood hazard GML files
+    ├── htd/        # High-tide (storm surge) flood hazard GML files
+    ├── brid/       # Bridge GML files
+    ├── dem/        # DEM elevation TIN files
+    ├── frn/        # City furniture GML files
+    ├── veg/        # Vegetation GML files
+    ├── urf/        # Urban planning zones (PLATEAU ADE — not importable)
+    ├── lsld/       # Landslide hazard zones (PLATEAU ADE — not importable)
     └── ...
 ```
 
 ## 4. Import Data into 3DCityDB
 
-Import feature types in recommended order. The importer processes a directory recursively.
+Import all standard CityGML feature types in the order shown. The importer processes a directory recursively.
 
 ```bash
 # Import buildings (largest dataset, may take 10-30 minutes)
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/bldg
+./data/import/run-import.sh udx/bldg
 
 # Import roads
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/tran
+./data/import/run-import.sh udx/tran
 
 # Import land use
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/luse
+./data/import/run-import.sh udx/luse
 
-# Import urban planning zones
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/urf
+# Import river flood hazard zones
+./data/import/run-import.sh udx/fld
 
-# Import flood hazard zones
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/fld
+# Import high-tide (storm surge) flood hazard zones
+./data/import/run-import.sh udx/htd
+
+# Import bridges
+./data/import/run-import.sh udx/brid
+
+# Import DEM elevation data
+./data/import/run-import.sh udx/dem
+
+# Import city furniture (street poles, signs, lights)
+./data/import/run-import.sh udx/frn
+
+# Import vegetation
+./data/import/run-import.sh udx/veg
 ```
 
-Verify import counts:
+**Note:** Do NOT import `udx/urf` or `udx/lsld` — these are PLATEAU ADE types that the standard 3DCityDB importer does not support (0 records would be imported).
+
+Verify the import was complete:
 ```bash
-docker exec 3dcitydb-pg psql -U citydb -d citydb -c "
-SELECT oc.classname, COUNT(*) AS count
-FROM citydb.cityobject co
-JOIN citydb.objectclass oc ON oc.id = co.objectclass_id
-GROUP BY oc.classname ORDER BY count DESC;"
+./data/import/verify-import.sh
+# Expected: all 8 feature types PASS
 ```
 
 ## 5. Create Materialized Views for Map Tiles
@@ -120,7 +137,14 @@ docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/001_buildi
 
 # Create land use, road, and flood zone views
 docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/002_additional_layers_mv.sql
+
+# Create bridge, city furniture, and vegetation views; refresh flood zones to include htd
+docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/003_new_layers_mv.sql
 ```
+
+**Note:** `003_new_layers_mv.sql` also runs `REFRESH MATERIALIZED VIEW citydb.flood_zone_footprints`,
+which makes the high-tide flood zone (htd, 7,021 objects) appear on the map alongside the river
+flood zone (fld, 1,740 objects) — no separate step needed.
 
 Verify the views were created:
 ```bash
@@ -135,10 +159,13 @@ Expected output:
 ```
  schemaname |      matviewname
 ------------+-----------------------
+ citydb     | bridge_footprints
  citydb     | building_footprints
  citydb     | flood_zone_footprints
+ citydb     | furniture_footprints
  citydb     | land_use_footprints
  citydb     | road_footprints
+ citydb     | vegetation_footprints
 ```
 
 **Note:** Without these views, the map will appear blank (no buildings visible).

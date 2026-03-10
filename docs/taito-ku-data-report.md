@@ -14,18 +14,30 @@
 
 | Feature Type | Class Name | Count | Description |
 |---|---|---|---|
-| `bldg` | Building | **72,486** | Top-level buildings (root only) |
-| `bldg` | BuildingWallSurface | 416,606 | LOD2 wall surfaces |
-| `bldg` | BuildingRoofSurface | 174,047 | LOD2 roof surfaces |
-| `bldg` | BuildingGroundSurface | 47,297 | LOD2 ground surfaces |
+| `bldg` | Building | **72,485** | Top-level buildings (root only) |
+| `bldg` | BuildingWallSurface | 416,607 | LOD2 wall surfaces |
+| `bldg` | BuildingRoofSurface | 174,048 | LOD2 roof surfaces |
+| `bldg` | BuildingGroundSurface | 47,298 | LOD2 ground surfaces |
 | `bldg` | BuildingInstallation | 528 | Attached structures (canopies, etc.) |
 | `luse` | LandUse | **188,273** | Land use zone polygons |
 | `tran` | Road | **22,172** | Road centrelines / surfaces |
 | `tran` | TrafficArea | 25,769 | Carriageway surfaces |
 | `tran` | AuxiliaryTrafficArea | 765 | Footpaths, medians |
-| `fld` | WaterBody | **1,740** | Flood hazard zone polygons |
+| `fld` | WaterBody | **1,740** | River flood hazard zone polygons |
+| `htd` | WaterBody | **7,021** | High-tide flood hazard zone polygons |
+| `brid` | Bridge | **59** | Bridge structures |
+| `brid` | BridgeWallSurface | 1,605 | Bridge wall surfaces |
+| `brid` | BridgeGroundSurface | 68 | Bridge ground surfaces |
+| `brid` | BridgeRoofSurface | 15 | Bridge roof surfaces |
+| `brid` | BridgeConstructionElement | 541 | Bridge construction elements |
+| `frn` | CityFurniture | **7,193** | Street furniture: poles, signs, lights |
+| `veg` | SolitaryVegetationObject | **10,191** | Individual trees and shrubs |
+| `veg` | PlantCover | 238 | Vegetation area polygons |
+| `dem` | ReliefFeature | **18** | DEM relief feature containers |
+| `dem` | TINRelief | 18 | TIN elevation model tiles |
 
 > Buildings are stored with both LOD1 (block solid) and LOD2 (detailed surfaces with roof/wall breakdown) geometry.
+> River flood zones (fld) and high-tide flood zones (htd) are both stored as `WaterBody` (objectclass_id=9) in `citydb.waterbody` — total 8,761 water body records.
 
 ---
 
@@ -149,9 +161,26 @@ citydb.cityobject          (every feature — universal parent)
     │       class, function, usage
     │       lod1_multi_surface_id → surface_geometry
     │
-    ├── citydb.waterbody   (flood hazard zones, stored as WaterBody)
+    ├── citydb.waterbody   (flood hazard zones — fld river + htd high-tide)
     │       id (FK → cityobject)
-    │       objectclass_id = 9
+    │       objectclass_id = 9  (8,761 total: 1,740 fld + 7,021 htd)
+    │
+    ├── citydb.bridge      (bridge structures)
+    │       id (FK → cityobject)
+    │       59 bridges; thematic surfaces via bridge_thematic_surface
+    │
+    ├── citydb.city_furniture  (street poles, signs, lights)
+    │       id (FK → cityobject)
+    │       lod1_geometry_id, lod2_geometry_id → surface_geometry
+    │       7,193 objects
+    │
+    ├── citydb.plant_cover / citydb.solitary_vegetat_object  (vegetation)
+    │       id (FK → cityobject)
+    │       10,191 SolitaryVegetationObject + 238 PlantCover
+    │
+    ├── citydb.relief_feature / citydb.tin_relief  (DEM elevation)
+    │       id (FK → cityobject)
+    │       18 TIN tiles covering Taito-ku
     │
     └── citydb.cityobject_genericattrib  (overflow attributes)
             cityobject_id (FK → cityobject)
@@ -201,7 +230,11 @@ All geometries are stored in **EPSG:6668** (JGD2011 geographic 2D — longitude/
 
 ## 6. Flood Hazard Data
 
-1,740 flood zone polygons imported from three river watershed datasets:
+**8,761 total water body polygons** — both river flood and high-tide flood zones, all stored as `WaterBody` (`objectclass_id = 9`).
+
+### River flood zones (fld) — 1,740 polygons
+
+Imported from three river watershed datasets:
 
 | Dataset | River | Description |
 |---|---|---|
@@ -209,7 +242,11 @@ All geometries are stored in **EPSG:6668** (JGD2011 geographic 2D — longitude/
 | Arakawa / Kandagawa | 荒川・神田川 | Combined watershed |
 | Sumidagawa / Shingashigawa | 隅田川・新川 | Sumida + Shingashi Rivers |
 
-Zones are stored as `WaterBody` (`objectclass_id = 9`). Spatial overlap with buildings can be queried using `co.envelope && fld_co.envelope` for fast bounding-box pre-filter.
+### High-tide flood zones (htd) — 7,021 polygons
+
+Storm surge / high-tide inundation zones (高潮浸水想定区域). Single GML file covering the Taito-ku area.
+
+Spatial overlap with buildings can be queried using `co.envelope && fld_co.envelope` for fast bounding-box pre-filter. To distinguish fld vs htd zones, the `gmlid` prefix differs but there is no separate objectclass — both use objectclass_id = 9.
 
 ---
 

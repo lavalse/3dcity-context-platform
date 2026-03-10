@@ -27,22 +27,28 @@ Use the PLATEAU MCP tools or API to get direct file URLs for specific feature ty
 
 ## Available Feature Types
 
-| Code | Japanese | English | Coverage |
-|---|---|---|---|
-| `bldg` | 建築物モデル | Building model | Full ward, LOD1 + LOD2 |
-| `tran` | 交通（道路）モデル | Road model | Full ward LOD1/2; Ueno/Asakusa LOD3 |
-| `luse` | 土地利用モデル | Land use model | Full ward, LOD1 |
-| `fld` | 洪水浸水想定区域 | Flood inundation hazard | 3 river watersheds |
-| `htd` | 高潮浸水想定区域 | Storm surge hazard | Applicable zones |
-| `lsld` | 土砂災害警戒区域 | Landslide hazard zone | Applicable zones |
-| `urf` | 都市計画決定情報 | Urban planning zones | Full ward, 11 zone types |
-| `brid` | 橋梁モデル | Bridge model | 5 LOD1, 21 LOD2 bridges |
-| `frn` | 都市設備モデル | Urban furniture | Ueno/Asakusa area |
-| `veg` | 植生モデル | Vegetation model | LOD0 full ward; LOD1/2 Ueno/Asakusa |
-| `shelter` | 避難施設情報 | Evacuation shelters | Full ward |
-| `park` | 公園情報 | Park information | Full ward |
-| `landmark` | ランドマーク情報 | Landmark information | Full ward |
-| `station` | 鉄道駅情報 | Railway station information | Full ward |
+| Code | Japanese | English | Coverage | DB Status |
+|---|---|---|---|---|
+| `bldg` | 建築物モデル | Building model | Full ward, LOD1 + LOD2 | ✅ Imported |
+| `tran` | 交通（道路）モデル | Road model | Full ward LOD1/2; Ueno/Asakusa LOD3 | ✅ Imported |
+| `luse` | 土地利用モデル | Land use model | Full ward, LOD1 | ✅ Imported |
+| `fld` | 洪水浸水想定区域 | Flood inundation hazard | 3 river watersheds | ✅ Imported |
+| `htd` | 高潮浸水想定区域 | Storm surge hazard | Applicable zones | ✅ Imported |
+| `brid` | 橋梁モデル | Bridge model | 5 LOD1, 21 LOD2 bridges | ✅ Imported |
+| `dem` | 航空測量（地形）モデル | DEM elevation model | Full ward | ✅ Imported |
+| `frn` | 都市設備モデル | Urban furniture | Ueno/Asakusa area | ✅ Imported |
+| `veg` | 植生モデル | Vegetation model | LOD0 full ward; LOD1/2 Ueno/Asakusa | ✅ Imported |
+| `urf` | 都市計画決定情報 | Urban planning zones | Full ward, 11 zone types | ❌ ADE (0 records) |
+| `lsld` | 土砂災害警戒区域 | Landslide hazard zone | Applicable zones | ❌ ADE (0 records) |
+| `shelter` | 避難施設情報 | Evacuation shelters | Full ward | ➖ Not in 3DCityDB |
+| `park` | 公園情報 | Park information | Full ward | ➖ Not in 3DCityDB |
+| `landmark` | ランドマーク情報 | Landmark information | Full ward | ➖ Not in 3DCityDB |
+| `station` | 鉄道駅情報 | Railway station information | Full ward | ➖ Not in 3DCityDB |
+
+**DB Status legend:**
+- ✅ Imported — standard CityGML type, imported into 3DCityDB
+- ❌ ADE (0 records) — PLATEAU ADE extension; standard 3DCityDB importer does not support it
+- ➖ Not in 3DCityDB — non-CityGML data format, not stored in the relational DB
 
 ## Building Data (bldg) — Key Attributes
 
@@ -145,13 +151,18 @@ Each dataset contains flood inundation depth polygons at various return periods.
 
 ## Import Order (Recommended)
 
-When importing into 3DCityDB, import in this order to avoid foreign key issues:
+When importing into 3DCityDB, import all standard CityGML types in this order:
 
 1. `bldg` (buildings — the primary dataset)
 2. `tran` (roads)
 3. `luse` (land use)
-4. `urf` (urban planning zones)
-5. `fld` (flood hazard)
-6. `brid`, `frn`, `veg` (secondary features)
+4. `fld` (river flood hazard)
+5. `htd` (high-tide / storm surge flood hazard)
+6. `brid` (bridges)
+7. `dem` (DEM elevation)
+8. `frn` (city furniture)
+9. `veg` (vegetation)
 
-See `data/import/run-import.sh` and `docs/setup.md` for the import procedure.
+**Do not import** `urf` or `lsld` — these are PLATEAU ADE types that produce 0 records with the standard importer.
+
+See `data/import/run-import.sh` and `docs/setup.md` for the import procedure. After importing, run `./data/import/verify-import.sh` to confirm all feature types are present.
