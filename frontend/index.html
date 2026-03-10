@@ -83,12 +83,16 @@
     .tab-pane.active { display: flex; flex-direction: column; }
 
     /* ── Query tab ── */
-    #tab-query { overflow-y: auto; }
+    #tab-query { overflow: hidden; }
     #tab-query > main {
-      max-width: 960px;
+      max-width: 1800px;
       margin: 0 auto;
       padding: 28px 24px;
       width: 100%;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
     }
 
     /* ── Query card ── */
@@ -97,6 +101,7 @@
       border-radius: 12px;
       padding: 24px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      flex-shrink: 0;
     }
     .query-card label {
       display: block;
@@ -155,7 +160,7 @@
     .example-chip:hover { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
 
     /* ── Results ── */
-    .results { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+    /* .results styles moved to .results-container and .results-left */
 
     /* ── SQL box ── */
     .sql-card { background: #0f172a; border-radius: 10px; overflow: hidden; }
@@ -189,7 +194,15 @@
     }
 
     /* ── Results table ── */
-    .table-card { background: white; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; }
+    .table-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      max-height: 100%;
+    }
     .table-header {
       display: flex;
       align-items: center;
@@ -200,7 +213,11 @@
     }
     .table-header span { font-size: 0.82rem; font-weight: 600; color: #475569; }
     .row-count { font-size: 0.75rem; padding: 3px 10px; background: #e0f2fe; color: #0369a1; border-radius: 12px; font-weight: 600; }
-    .table-scroll { overflow-x: auto; }
+    .table-scroll {
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 60vh;
+    }
     table { width: 100%; border-collapse: collapse; }
     thead tr { background: #f8fafc; }
     th { padding: 10px 14px; text-align: left; font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e2e8f0; }
@@ -555,6 +572,132 @@
     }
     .dbg-line { padding: 1px 10px; }
     .dbg-line:hover { background: #1e293b; }
+
+    /* Query tab map panel styles */
+    .results-container {
+      display: flex;
+      gap: 16px;
+      flex: 1;
+      overflow: hidden;
+      margin-top: 24px;
+      min-height: 0;
+    }
+    .results-left {
+      flex: 1;
+      min-width: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: flex 0.3s ease;
+    }
+    /* When map is not collapsed, table takes 40% width */
+    .results-container:has(.results-map-wrapper:not(.collapsed)) .results-left {
+      flex: 0 0 40%;
+    }
+    .results-map-wrapper {
+      flex: 1;
+      display: flex;
+      gap: 0;
+      position: relative;
+      transition: all 0.3s ease;
+      border-radius: 10px;
+      overflow: hidden;
+      background: white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .results-map-wrapper.collapsed {
+      flex: 0 0 0;
+      width: 0;
+      overflow: hidden;
+      opacity: 0;
+    }
+    .map-container {
+      flex: 1;
+      position: relative;
+      min-width: 0;
+    }
+    #query-map {
+      width: 100%;
+      height: 100%;
+    }
+    .detail-panel {
+      flex: 0 0 300px;
+      background: white;
+      border-left: 1px solid #e5e7eb;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .detail-panel.hidden {
+      display: none;
+    }
+    .detail-panel-header {
+      padding: 16px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      background: #f8fafc;
+    }
+    .detail-panel-content {
+      padding: 16px;
+      flex: 1;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #64748b;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .close-btn:hover {
+      background: #e5e7eb;
+      color: #0f172a;
+    }
+    .attribute-row {
+      display: flex;
+      padding: 8px 0;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .attribute-row:last-child {
+      border-bottom: none;
+    }
+    .attribute-label {
+      font-weight: 600;
+      flex: 0 0 120px;
+      color: #64748b;
+      font-size: 0.85rem;
+    }
+    .attribute-value {
+      flex: 1;
+      color: #0f172a;
+      font-size: 0.85rem;
+      word-break: break-word;
+    }
+    .map-toggle-btn {
+      font-size: 0.75rem;
+      padding: 4px 12px;
+      background: #0369a1;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-right: 8px;
+      transition: background 0.2s;
+    }
+    .map-toggle-btn:hover {
+      background: #0284c7;
+    }
   </style>
 </head>
 <body>
@@ -600,12 +743,29 @@
       </div>
     </div>
 
-    <div class="results" id="results">
-      <div class="empty-state">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803a7.5 7.5 0 0010.607 0z"/>
-        </svg>
-        <p>質問を入力して検索してください</p>
+    <div class="results-container">
+      <div class="results-left" id="results">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803a7.5 7.5 0 0010.607 0z"/>
+          </svg>
+          <p>質問を入力して検索してください</p>
+        </div>
+      </div>
+
+      <div class="results-map-wrapper collapsed" id="query-map-wrapper">
+        <div class="map-container">
+          <div id="query-map"></div>
+        </div>
+        <div class="detail-panel hidden" id="query-detail-panel">
+          <div class="detail-panel-header">
+            <span>詳細 / Details</span>
+            <button class="close-btn" onclick="closeQueryDetail()">×</button>
+          </div>
+          <div class="detail-panel-content" id="query-detail-content">
+            <!-- Dynamic content -->
+          </div>
+        </div>
       </div>
     </div>
   </main>
@@ -956,7 +1116,12 @@ function renderResults(data) {
   header.className = 'table-header';
   header.innerHTML = `
     <span>Results</span>
-    <span class="row-count">${data.row_count.toLocaleString()} row${data.row_count !== 1 ? 's' : ''}</span>
+    <div>
+      <button id="toggle-map-btn" class="map-toggle-btn" onclick="toggleQueryMap()">
+        🗺️ Show Map
+      </button>
+      <span class="row-count">${data.row_count.toLocaleString()} row${data.row_count !== 1 ? 's' : ''}</span>
+    </div>
   `;
   tableCard.appendChild(header);
 
@@ -977,8 +1142,20 @@ function renderResults(data) {
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
+    const gmlIdIndex = data.columns.indexOf('gmlid');
+
     data.rows.forEach(row => {
       const tr = document.createElement('tr');
+
+      // Store gmlid as data attribute if available
+      if (gmlIdIndex !== -1 && row[gmlIdIndex]) {
+        tr.dataset.gmlid = row[gmlIdIndex];
+        tr.style.cursor = 'pointer';
+        tr.onclick = () => flyToTableRow(row[gmlIdIndex]);
+        tr.onmouseenter = (e) => e.currentTarget.style.backgroundColor = '#f0f9ff';
+        tr.onmouseleave = (e) => e.currentTarget.style.backgroundColor = '';
+      }
+
       row.forEach(cell => {
         const td = document.createElement('td');
         td.textContent = cell === null ? '—' : cell;
@@ -993,6 +1170,9 @@ function renderResults(data) {
   }
 
   resultsEl.appendChild(tableCard);
+
+  // Display results on query map if applicable
+  displayResultsOnQueryMap(data);
 }
 
 function escHtml(str) {
@@ -1856,6 +2036,329 @@ function downloadBuildingExport(gmlid, format, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+// ── Query Tab Map ──
+let queryMap = null;
+let queryMapInitialized = false;
+let queryMapLoaded = false;
+let queryResultsData = new Map(); // gmlid -> {columns, values}
+let selectedQueryGmlid = null;
+
+function initQueryMap() {
+  if (queryMapInitialized) return;
+  queryMapInitialized = true;
+
+  queryMap = new maplibregl.Map({
+    container: 'query-map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [139.7833, 35.7122],
+    zoom: 14,
+  });
+
+  queryMap.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+  queryMap.on('load', () => {
+    queryMapLoaded = true;
+    // Remove 3D buildings from basemap
+    const layers = queryMap.getStyle().layers;
+    for (const layer of layers) {
+      if (layer.type === 'fill-extrusion') {
+        queryMap.removeLayer(layer.id);
+      }
+    }
+
+    // Add source for query results
+    queryMap.addSource('query-results', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Base layer - all results
+    queryMap.addLayer({
+      id: 'query-results-fill',
+      type: 'fill',
+      source: 'query-results',
+      paint: {
+        'fill-color': '#FF9800',
+        'fill-opacity': 0.6
+      }
+    });
+
+    queryMap.addLayer({
+      id: 'query-results-outline',
+      type: 'line',
+      source: 'query-results',
+      paint: {
+        'line-color': '#F57C00',
+        'line-width': 2
+      }
+    });
+
+    // Hover layer
+    queryMap.addLayer({
+      id: 'query-results-hover',
+      type: 'fill',
+      source: 'query-results',
+      filter: ['==', 'gmlid', ''],
+      paint: {
+        'fill-color': '#FFF9C4',
+        'fill-opacity': 0.5
+      }
+    });
+
+    // Selected layer
+    queryMap.addLayer({
+      id: 'query-results-selected',
+      type: 'fill',
+      source: 'query-results',
+      filter: ['==', 'gmlid', ''],
+      paint: {
+        'fill-color': '#FFD600',
+        'fill-opacity': 0.8
+      }
+    });
+
+    queryMap.addLayer({
+      id: 'query-results-selected-outline',
+      type: 'line',
+      source: 'query-results',
+      filter: ['==', 'gmlid', ''],
+      paint: {
+        'line-color': '#FF6F00',
+        'line-width': 3
+      }
+    });
+
+    // Attach event handlers
+    queryMap.on('click', 'query-results-fill', onQueryResultClick);
+    queryMap.on('mouseenter', 'query-results-fill', onQueryResultHover);
+    queryMap.on('mouseleave', 'query-results-fill', onQueryResultLeave);
+  });
+}
+
+function onQueryResultClick(e) {
+  const gmlid = e.features[0].properties.gmlid;
+  selectedQueryGmlid = gmlid;
+
+  // Update selected filter
+  queryMap.setFilter('query-results-selected', ['==', 'gmlid', gmlid]);
+  queryMap.setFilter('query-results-selected-outline', ['==', 'gmlid', gmlid]);
+
+  // Show detail panel with row data
+  showQueryDetail(gmlid);
+}
+
+function onQueryResultHover(e) {
+  queryMap.getCanvas().style.cursor = 'pointer';
+  const gmlid = e.features[0].properties.gmlid;
+  queryMap.setFilter('query-results-hover', ['==', 'gmlid', gmlid]);
+}
+
+function onQueryResultLeave() {
+  queryMap.getCanvas().style.cursor = '';
+  queryMap.setFilter('query-results-hover', ['==', 'gmlid', '']);
+}
+
+function showQueryDetail(gmlid) {
+  const rowData = queryResultsData.get(gmlid);
+  if (!rowData) return;
+
+  const panel = document.getElementById('query-detail-panel');
+  const content = document.getElementById('query-detail-content');
+
+  // Build attribute rows from columns and row data
+  let html = '';
+  rowData.columns.forEach((colName, index) => {
+    const value = rowData.values[index];
+    html += `
+      <div class="attribute-row">
+        <div class="attribute-label">${escHtml(colName)}</div>
+        <div class="attribute-value">${value === null ? '—' : escHtml(String(value))}</div>
+      </div>
+    `;
+  });
+
+  content.innerHTML = html;
+  panel.classList.remove('hidden');
+}
+
+function closeQueryDetail() {
+  document.getElementById('query-detail-panel').classList.add('hidden');
+  selectedQueryGmlid = null;
+  queryMap.setFilter('query-results-selected', ['==', 'gmlid', '']);
+  queryMap.setFilter('query-results-selected-outline', ['==', 'gmlid', '']);
+}
+
+async function displayResultsOnQueryMap(data) {
+  // 1. Check if results have gmlid column
+  const gmlIdIndex = data.columns.indexOf('gmlid');
+  if (gmlIdIndex === -1) {
+    // No spatial data - hide map
+    document.getElementById('query-map-wrapper').classList.add('collapsed');
+    return;
+  }
+
+  // 2. Initialize map if not already done
+  if (!queryMapInitialized) {
+    initQueryMap();
+  }
+
+  // 3. Extract gmlids and build row data map
+  queryResultsData.clear();
+  const gmlids = [];
+
+  data.rows.forEach(row => {
+    const gmlid = row[gmlIdIndex];
+    if (gmlid) {
+      gmlids.push(gmlid);
+      // Store row data for detail panel
+      queryResultsData.set(gmlid, {
+        columns: data.columns,
+        values: row
+      });
+    }
+  });
+
+  if (gmlids.length === 0) {
+    document.getElementById('query-map-wrapper').classList.add('collapsed');
+    return;
+  }
+
+  // 4. Fetch geometry for first 50 features (performance limit)
+  const fetchLimit = Math.min(gmlids.length, 50);
+  const geometryPromises = gmlids.slice(0, fetchLimit).map(gmlid =>
+    fetch(`${API}/buildings/${gmlid}`)
+      .then(res => res.json())
+      .catch(() => null)
+  );
+
+  const results = await Promise.allSettled(geometryPromises);
+  const features = results
+    .filter(r => r.status === 'fulfilled' && r.value?.lod1)
+    .map(r => {
+      const feature = r.value.lod1.features[0];
+      // Ensure gmlid is in properties for filtering
+      if (feature && !feature.properties) {
+        feature.properties = {};
+      }
+      if (feature) {
+        feature.properties.gmlid = r.value.gmlid;
+      }
+      return feature;
+    })
+    .filter(Boolean);
+
+  // 5. Create FeatureCollection and update map source
+  const featureCollection = {
+    type: 'FeatureCollection',
+    features: features
+  };
+
+  console.log('Features to display:', features.length);
+
+  // Wait for map to be loaded before updating source
+  const updateMapData = () => {
+    if (!queryMap.getSource('query-results')) {
+      console.error('Map source not ready yet');
+      return;
+    }
+
+    queryMap.getSource('query-results').setData(featureCollection);
+
+    // 6. Fit map bounds to all features
+    if (features.length > 0) {
+      const bounds = new maplibregl.LngLatBounds();
+      features.forEach(f => {
+        f.geometry.coordinates[0].forEach(coord => {
+          bounds.extend(coord);
+        });
+      });
+      queryMap.fitBounds(bounds, { padding: 40, duration: 500 });
+    }
+
+    // 7. Show map panel and hide detail panel initially
+    document.getElementById('query-map-wrapper').classList.remove('collapsed');
+    document.getElementById('query-detail-panel').classList.add('hidden');
+
+    // 8. Show notice if limiting results
+    if (gmlids.length > fetchLimit) {
+      console.log(`Showing first ${fetchLimit} of ${gmlids.length} results on map`);
+    }
+  };
+
+  // If map is already loaded, update immediately. Otherwise wait for load event
+  if (queryMapLoaded) {
+    updateMapData();
+  } else {
+    queryMap.once('load', updateMapData);
+  }
+}
+
+function flyToTableRow(gmlid) {
+  // Check if map is initialized and not collapsed
+  if (!queryMapInitialized || !queryMapLoaded) {
+    // Map not ready, just open it
+    const wrapper = document.getElementById('query-map-wrapper');
+    if (wrapper.classList.contains('collapsed')) {
+      toggleQueryMap();
+    }
+    return;
+  }
+
+  // Ensure map is visible
+  const wrapper = document.getElementById('query-map-wrapper');
+  if (wrapper.classList.contains('collapsed')) {
+    toggleQueryMap();
+  }
+
+  // Get the feature from the map source
+  const source = queryMap.getSource('query-results');
+  if (!source) return;
+
+  const features = source._data?.features || [];
+  const feature = features.find(f => f.properties?.gmlid === gmlid);
+
+  if (feature) {
+    // Calculate center of feature
+    const coords = feature.geometry.coordinates[0];
+    const lngs = coords.map(c => c[0]);
+    const lats = coords.map(c => c[1]);
+    const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+    const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+
+    // Fly to the feature
+    queryMap.flyTo({
+      center: [centerLng, centerLat],
+      zoom: 17,
+      duration: 1000
+    });
+
+    // Select the feature after a short delay
+    setTimeout(() => {
+      selectedQueryGmlid = gmlid;
+      queryMap.setFilter('query-results-selected', ['==', 'gmlid', gmlid]);
+      queryMap.setFilter('query-results-selected-outline', ['==', 'gmlid', gmlid]);
+      showQueryDetail(gmlid);
+    }, 500);
+  }
+}
+
+function toggleQueryMap() {
+  const wrapper = document.getElementById('query-map-wrapper');
+  wrapper.classList.toggle('collapsed');
+
+  // Update toggle button icon/text
+  const btn = document.getElementById('toggle-map-btn');
+  if (wrapper.classList.contains('collapsed')) {
+    btn.innerHTML = '🗺️ Show Map';
+  } else {
+    btn.innerHTML = '🗺️ Hide Map';
+    // Resize map after transition
+    setTimeout(() => {
+      if (queryMap) queryMap.resize();
+    }, 300);
+  }
 }
 
 // ── Cesium 3D View ──

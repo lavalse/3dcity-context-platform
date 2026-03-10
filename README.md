@@ -34,6 +34,7 @@ See [docs/setup.md](docs/setup.md) for the full setup guide.
 cp .env.example .env        # Set ANTHROPIC_API_KEY
 docker compose up -d db     # Start 3DCityDB
 # Download and import PLATEAU data (see docs/setup.md)
+# Create materialized views for map tiles (see docs/setup.md step 5)
 docker compose up -d        # Start full stack
 open http://localhost:3000
 ```
