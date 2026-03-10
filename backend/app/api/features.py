@@ -12,6 +12,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 
 from app.database import get_pool
+from app.services.versioning import archive_and_next_version, insert_version
 
 router = APIRouter()
 
@@ -145,32 +146,47 @@ async def patch_feature(gmlid: str, request: Request):
             if classname not in CLASSNAME_QUERIES:
                 raise HTTPException(status_code=422, detail=f"Feature type '{classname}' not editable here")
 
-            # Update cityobject.name if provided
-            if "name" in body:
-                await conn.execute(
-                    "UPDATE citydb.cityobject SET name=$1 WHERE gmlid=$2",
-                    body["name"] or None, gmlid,
-                )
+            async with conn.transaction():
+                # Version: archive current before update
+                next_ver = await archive_and_next_version(conn, gmlid)
 
-            # Update type-specific table for class/function/usage
-            table = CLASSNAME_TO_TABLE.get(classname)
-            if table:
-                updates = {}
-                if "class" in body:
-                    updates["class"] = body["class"]
-                if "function" in body:
-                    updates["function"] = body["function"]
-                if "usage" in body:
-                    updates["usage"] = body["usage"]
-                if updates:
-                    set_clauses = ", ".join(
-                        f'"{col}" = ${i+2}' for i, col in enumerate(updates.keys())
-                    )
-                    values = list(updates.values()) + [feature_id]
+                # Update cityobject.name if provided
+                if "name" in body:
                     await conn.execute(
-                        f"UPDATE {table} SET {set_clauses} WHERE id = ${len(values)}",
-                        *values,
+                        "UPDATE citydb.cityobject SET name=$1 WHERE gmlid=$2",
+                        body["name"] or None, gmlid,
                     )
+
+                # Update type-specific table for class/function/usage
+                table = CLASSNAME_TO_TABLE.get(classname)
+                if table:
+                    updates = {}
+                    if "class" in body:
+                        updates["class"] = body["class"]
+                    if "function" in body:
+                        updates["function"] = body["function"]
+                    if "usage" in body:
+                        updates["usage"] = body["usage"]
+                    if updates:
+                        set_clauses = ", ".join(
+                            f'"{col}" = ${i+2}' for i, col in enumerate(updates.keys())
+                        )
+                        values = list(updates.values()) + [feature_id]
+                        await conn.execute(
+                            f"UPDATE {table} SET {set_clauses} WHERE id = ${len(values)}",
+                            *values,
+                        )
+
+                # Read updated attrs for snapshot
+                name_row = await conn.fetchrow(
+                    "SELECT name FROM citydb.cityobject WHERE gmlid = $1", gmlid
+                )
+                attr_snapshot: dict = {"name": name_row["name"]}
+                q = CLASSNAME_QUERIES.get(classname)
+                if q:
+                    attr_row = await conn.fetchrow(q, feature_id)
+                    attr_snapshot.update(dict(attr_row))
+                await insert_version(conn, gmlid, next_ver, "attr_update", attr_snapshot)
 
             return await _get_feature_data(conn, gmlid)
     except HTTPException:

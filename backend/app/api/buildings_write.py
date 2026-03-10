@@ -19,6 +19,7 @@ from pydantic import BaseModel, field_validator
 from app.database import get_pool
 from app.database_write import update_building_footprint, delete_building_footprint
 from app.api.buildings import USAGE_LABELS
+from app.services.versioning import archive_and_next_version, insert_version
 
 router = APIRouter()
 
@@ -163,6 +164,9 @@ async def patch_building(gmlid: str, body: BuildingPatch):
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
+                # Version: archive current, get next version number
+                next_ver = await archive_and_next_version(conn, gmlid)
+
                 # Update cityobject.name if provided
                 if body.name is not None:
                     await conn.execute(
@@ -205,6 +209,21 @@ async def patch_building(gmlid: str, body: BuildingPatch):
                         f"UPDATE citydb.building SET {', '.join(set_clauses)} WHERE id = ${idx}",
                         *args,
                     )
+
+                # Read updated attrs for snapshot
+                b_row = await conn.fetchrow(
+                    "SELECT measured_height, storeys_above_ground, usage, class, "
+                    "lod1_solid_id, lod2_solid_id FROM citydb.building WHERE id = $1",
+                    building_id,
+                )
+                await insert_version(conn, gmlid, next_ver, "attr_update", {
+                    "measured_height":      b_row["measured_height"],
+                    "storeys_above_ground": b_row["storeys_above_ground"],
+                    "usage":                b_row["usage"],
+                    "class":                b_row["class"],
+                    "has_lod1":             b_row["lod1_solid_id"] is not None,
+                    "has_lod2":             b_row["lod2_solid_id"] is not None,
+                })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -247,6 +266,9 @@ async def delete_building(gmlid: str):
             all_geom_root_ids = list({x for x in [lod1_solid_id, lod2_solid_id] + ts_geom_ids if x})
 
             async with conn.transaction():
+                # Version: archive current, insert 'deleted' marker
+                next_ver = await archive_and_next_version(conn, gmlid)
+                await insert_version(conn, gmlid, next_ver, "delete", {}, status="deleted")
                 # 1. Break FK: building → surface_geometry (all geometry columns)
                 await conn.execute(
                     """
@@ -344,6 +366,9 @@ async def put_building_lod1(gmlid: str, body: Lod1Put):
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
+                # Version: archive current before geometry replacement
+                next_ver = await archive_and_next_version(conn, gmlid)
+
                 # 1. Break FK from building to old solid
                 await conn.execute(
                     "UPDATE citydb.building SET lod1_solid_id = NULL WHERE id = $1",
@@ -405,6 +430,22 @@ async def put_building_lod1(gmlid: str, body: Lod1Put):
                     """,
                     new_root_id, building_id,
                 )
+
+                # Version: record geometry replacement
+                b_row = await conn.fetchrow(
+                    "SELECT measured_height, storeys_above_ground, usage, class, "
+                    "lod2_solid_id FROM citydb.building WHERE id = $1",
+                    building_id,
+                )
+                await insert_version(conn, gmlid, next_ver, "geom_lod1", {
+                    "has_lod1":             True,
+                    "height":               body.height,
+                    "measured_height":      b_row["measured_height"],
+                    "storeys_above_ground": b_row["storeys_above_ground"],
+                    "usage":                b_row["usage"],
+                    "class":                b_row["class"],
+                    "has_lod2":             b_row["lod2_solid_id"] is not None,
+                })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -451,6 +492,9 @@ async def put_building_lod2(gmlid: str, body: Lod2Put):
             old_ms_ids = list(set(old_ms_ids))
 
             async with conn.transaction():
+                # Version: archive current before geometry replacement
+                next_ver = await archive_and_next_version(conn, gmlid)
+
                 # 1. Break FK: building → lod2_solid_id
                 await conn.execute(
                     "UPDATE citydb.building SET lod2_solid_id = NULL WHERE id = $1",
@@ -538,6 +582,22 @@ async def put_building_lod2(gmlid: str, body: Lod2Put):
                     "UPDATE citydb.building SET lod2_solid_id = $1 WHERE id = $2",
                     sg_root_id, building_id,
                 )
+
+                # Version: record LOD2 geometry replacement
+                b_row = await conn.fetchrow(
+                    "SELECT measured_height, storeys_above_ground, usage, class, "
+                    "lod1_solid_id FROM citydb.building WHERE id = $1",
+                    building_id,
+                )
+                await insert_version(conn, gmlid, next_ver, "geom_lod2", {
+                    "has_lod2":             True,
+                    "surface_count":        len(body.surfaces),
+                    "measured_height":      b_row["measured_height"],
+                    "storeys_above_ground": b_row["storeys_above_ground"],
+                    "usage":                b_row["usage"],
+                    "class":                b_row["class"],
+                    "has_lod1":             b_row["lod1_solid_id"] is not None,
+                })
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

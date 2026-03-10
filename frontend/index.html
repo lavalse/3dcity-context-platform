@@ -1921,6 +1921,78 @@ function renderMultiSelectPanel(tooMany, total) {
   refreshExportButton();
 }
 
+// ── Version history helpers ───────────────────────────────────────────────────
+
+function _versionBadgeHtml(ver, changedAt) {
+  const date = changedAt ? changedAt.slice(0, 10) : '';
+  return `<span style="margin-left:6px;font-size:0.72rem;background:#1e40af;color:#bfdbfe;padding:1px 6px;border-radius:10px;font-weight:600;vertical-align:middle">v${ver}${date ? ' · ' + date : ''}</span>`;
+}
+
+function _changeTypeLabel(ct) {
+  return {import:'初期インポート', attr_update:'属性更新', geom_lod1:'LOD1更新',
+          geom_lod2:'LOD2更新', delete:'削除'}[ct] || ct;
+}
+
+function _statusLabel(s) {
+  return {current:'[現在]', archived:'[旧版]', deleted:'[削除]'}[s] || s;
+}
+
+async function loadVersionHistory(gmlid, bodyEl, headerEl, apiPath) {
+  // apiPath e.g. 'buildings' or 'features'
+  try {
+    const resp = await fetch(`/api/${apiPath}/${encodeURIComponent(gmlid)}/versions`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const versions = data.versions || [];
+    if (!versions.length) return;
+
+    // Update header badge (current version)
+    const cur = versions.find(v => v.status === 'current') || versions[0];
+    const headerDom = document.getElementById(headerEl);
+    if (headerDom) {
+      // Remove any existing badge
+      const existing = headerDom.querySelector('.ver-badge');
+      if (existing) existing.remove();
+      const badge = document.createElement('span');
+      badge.className = 'ver-badge';
+      badge.innerHTML = _versionBadgeHtml(cur.version, cur.changed_at);
+      headerDom.appendChild(badge);
+    }
+
+    // Inject version history section at end of body
+    const bodyDom = document.getElementById(bodyEl);
+    if (!bodyDom) return;
+    let existing = bodyDom.querySelector('.version-history-section');
+    if (existing) existing.remove();
+
+    const section = document.createElement('div');
+    section.className = 'version-history-section';
+    section.style.cssText = 'margin-top:12px;border-top:1px solid #2a4a6b;padding-top:10px';
+
+    const toggleId = `ver-hist-${bodyEl}`;
+    const rows = versions.map(v => {
+      const date = v.changed_at ? v.changed_at.slice(0, 10) : '—';
+      const statusColor = {current:'#22c55e', archived:'#94a3b8', deleted:'#ef4444'}[v.status] || '#94a3b8';
+      return `<div style="display:flex;gap:6px;align-items:baseline;padding:3px 0;font-size:0.75rem;color:#cbd5e1">
+        <span style="font-weight:600;color:${statusColor}">v${v.version}</span>
+        <span style="color:${statusColor}">${_statusLabel(v.status)}</span>
+        <span>${_changeTypeLabel(v.change_type)}</span>
+        <span style="margin-left:auto;color:#64748b">${date}</span>
+      </div>`;
+    }).join('');
+
+    section.innerHTML = `
+      <div style="cursor:pointer;user-select:none;font-size:0.78rem;font-weight:600;color:#94a3b8;display:flex;align-items:center;gap:4px"
+           onclick="const el=document.getElementById('${toggleId}');const arr=this.querySelector('.ver-arr');el.style.display=el.style.display==='none'?'block':'none';arr.textContent=el.style.display==='none'?'▶':'▼'">
+        <span class="ver-arr">▶</span> 版本履歴 / Version History
+      </div>
+      <div id="${toggleId}" style="display:none;margin-top:6px">${rows}</div>`;
+    bodyDom.appendChild(section);
+  } catch(e) {
+    // silently ignore — version table may not exist yet
+  }
+}
+
 // ── Render single-building attribute panel (shared logic) ──
 function renderDetailPanelInto(data, headerEl, bodyEl, showLod) {
   document.getElementById(headerEl).textContent = '建物詳細 / Building Detail';
@@ -1989,6 +2061,9 @@ function renderDetailPanelInto(data, headerEl, bodyEl, showLod) {
   document.getElementById(bodyEl).innerHTML =
     renderNonBuildingSummary() + basicHtml + genericHtml + lodHtml + idHtml + editBtnHtml;
   if (bodyEl === 'detail-body') refreshExportButton();
+
+  // Async: load version badge + history
+  loadVersionHistory(data.gmlid, bodyEl, headerEl, 'buildings');
 }
 
 function renderDetailPanel(data) {
@@ -2966,6 +3041,9 @@ function renderFeaturePanel(data) {
   currentFeatureData = data;
   document.getElementById('detail-body').innerHTML = html;
   refreshExportButton();
+
+  // Async: load version badge + history
+  loadVersionHistory(data.gmlid, 'detail-body', 'detail-header', 'features');
 }
 
 // ── Export selection helpers ──
