@@ -1,15 +1,10 @@
--- 001_building_footprints_mv.sql
--- Creates a materialized view of building LOD1 footprints (2D union of solid faces)
--- projected to WGS84 (EPSG:4326) for use with Martin MVT tile server.
---
--- Runtime: ~30–90 seconds for 72,486 buildings.
--- Run with:
---   docker exec -i 3dcitydb-pg psql -U citydb -d citydb \
---     < data/migrations/001_building_footprints_mv.sql
+-- Migration 002: Convert building_footprints from Materialized View to regular TABLE
+-- This enables instant single-row updates after LOD1/LOD2 edits,
+-- instead of requiring a full ~30-90s REFRESH MATERIALIZED VIEW.
 
 DROP MATERIALIZED VIEW IF EXISTS citydb.building_footprints;
 
-CREATE MATERIALIZED VIEW citydb.building_footprints AS
+CREATE TABLE citydb.building_footprints AS
 SELECT
     co.gmlid,
     COALESCE(b.measured_height, 0)       AS measured_height,
@@ -28,8 +23,7 @@ WHERE b.building_root_id = b.id
   AND sg.geometry IS NOT NULL
 GROUP BY co.gmlid, b.id, b.measured_height, b.usage, b.lod2_solid_id;
 
--- Spatial index required by Martin and PostGIS bbox queries
+CREATE UNIQUE INDEX ON citydb.building_footprints (gmlid);
 CREATE INDEX ON citydb.building_footprints USING GIST(geometry);
 
--- Verify
 SELECT COUNT(*) AS building_count FROM citydb.building_footprints;
