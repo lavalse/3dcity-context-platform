@@ -110,7 +110,40 @@ JOIN citydb.objectclass oc ON oc.id = co.objectclass_id
 GROUP BY oc.classname ORDER BY count DESC;"
 ```
 
-## 5. Start the Full Stack
+## 5. Create Materialized Views for Map Tiles
+
+The map requires materialized views that transform 3DCityDB data into tile-ready format (EPSG:4326 WGS84) for the Martin tile server.
+
+```bash
+# Create building footprints view (~30-90 seconds for 90k buildings)
+docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/001_building_footprints_mv.sql
+
+# Create land use, road, and flood zone views
+docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/002_additional_layers_mv.sql
+```
+
+Verify the views were created:
+```bash
+docker exec 3dcitydb-pg psql -U citydb -d citydb -c "
+SELECT schemaname, matviewname
+FROM pg_matviews
+WHERE schemaname = 'citydb'
+ORDER BY matviewname;"
+```
+
+Expected output:
+```
+ schemaname |      matviewname
+------------+-----------------------
+ citydb     | building_footprints
+ citydb     | flood_zone_footprints
+ citydb     | land_use_footprints
+ citydb     | road_footprints
+```
+
+**Note:** Without these views, the map will appear blank (no buildings visible).
+
+## 6. Start the Full Stack
 
 ```bash
 docker compose up -d
@@ -122,7 +155,7 @@ Services:
 - API docs: http://localhost:8000/docs
 - DB: localhost:5432
 
-## 6. Local Backend Development (Optional)
+## 7. Local Backend Development (Optional)
 
 For faster iteration without rebuilding the Docker image:
 
