@@ -54,6 +54,18 @@ JOIN citydb.objectclass oc ON oc.id = co.objectclass_id
 GROUP BY oc.classname ORDER BY count DESC;"
 ```
 
+### Create materialized views for map tiles
+
+After importing data, create materialized views that transform 3DCityDB data to tile-ready format (EPSG:4326) for Martin MVT tile server:
+
+```bash
+docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/001_building_footprints_mv.sql
+docker exec -i 3dcitydb-pg psql -U citydb -d citydb < data/migrations/002_additional_layers_mv.sql
+docker compose restart martin  # Restart Martin to discover new views
+```
+
+This creates 4 materialized views: `building_footprints`, `land_use_footprints`, `road_footprints`, `flood_zone_footprints`. **Required for the map to display buildings and other layers.**
+
 ## LLM Mode vs Placeholder Mode
 
 The backend has two modes controlled by `ANTHROPIC_API_KEY` in `.env`:
