@@ -169,10 +169,10 @@ async def get_building_detail(gmlid: str):
     """
 
     # --- 2. LOD1 geometry — return single 2D footprint polygon ---
-    # Collect all solid faces, project to 2D, then take convex hull → building footprint.
+    # Union all solid faces projected to 2D → preserves concave shapes correctly.
     lod1_sql = """
         SELECT ST_AsGeoJSON(
-            ST_FlipCoordinates(ST_ConvexHull(ST_Collect(ST_Force2D(sg.geometry)))),
+            ST_FlipCoordinates(ST_Union(ST_Force2D(sg.geometry))),
             15, 0
         ) AS geom_json
         FROM citydb.building b

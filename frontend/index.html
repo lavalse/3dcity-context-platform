@@ -428,6 +428,44 @@
 
     .hidden { display: none !important; }
 
+    /* ── Edit form ── */
+    .edit-field { margin-bottom: 8px; }
+    .edit-label { display: block; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 3px; }
+    .edit-input {
+      width: 100%; padding: 6px 10px;
+      border: 1px solid #e2e8f0; border-radius: 6px;
+      font-size: 0.85rem; font-family: inherit; outline: none; box-sizing: border-box;
+    }
+    .edit-input:focus { border-color: #1a3a5c; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #1a3a5c; color: white;
+      padding: 10px 20px; border-radius: 8px;
+      font-size: 0.88rem; font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: none; z-index: 9999;
+      max-width: 420px; text-align: center; pointer-events: none;
+    }
+
+    /* ── Dialogs ── */
+    dialog {
+      border: none; border-radius: 12px;
+      padding: 24px; max-width: 380px; width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      font-family: inherit;
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.45); }
+    .dialog-title { font-size: 1rem; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+    .dialog-body  { font-size: 0.88rem; color: #475569; margin-bottom: 18px; line-height: 1.5; }
+    .dialog-gmlid { font-family: monospace; font-size: 0.78rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+    .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .dialog-btn { padding: 8px 18px; border-radius: 6px; font-size: 0.88rem; font-weight: 600; cursor: pointer; border: none; font-family: inherit; }
+    .dialog-btn-cancel  { background: #f1f5f9; color: #475569; }
+    .dialog-btn-danger  { background: #dc2626; color: white; }
+    .dialog-btn-primary { background: #1a3a5c; color: white; }
+
     /* ── Chat tab ── */
     #tab-chat { flex-direction: column; }
     #chat-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
@@ -662,6 +700,38 @@
     </div>
   </div>
 </div>
+
+<!-- Toast notification -->
+<div id="toast"></div>
+
+<!-- Delete confirmation dialog -->
+<dialog id="delete-dialog">
+  <div class="dialog-title">建物を削除しますか？</div>
+  <div class="dialog-body">
+    GML ID: <span class="dialog-gmlid" id="delete-dialog-gmlid"></span><br><br>
+    この操作は取り消せません。建物のすべてのデータが削除されます。
+  </div>
+  <div class="dialog-actions">
+    <button class="dialog-btn dialog-btn-cancel" onclick="document.getElementById('delete-dialog').close()">キャンセル</button>
+    <button class="dialog-btn dialog-btn-danger" onclick="executeDelete()">削除する</button>
+  </div>
+</dialog>
+
+<!-- LOD1 footprint height dialog -->
+<dialog id="lod1-dialog">
+  <div class="dialog-title">建物高さを入力</div>
+  <div class="dialog-body">
+    GML ID: <span class="dialog-gmlid" id="lod1-dialog-gmlid"></span>
+    <div class="edit-field" style="margin-top:12px">
+      <label class="edit-label">建物高さ (m)</label>
+      <input class="edit-input" id="lod1-height-input" type="number" step="0.1" min="0.1" placeholder="例: 12.5">
+    </div>
+  </div>
+  <div class="dialog-actions">
+    <button class="dialog-btn dialog-btn-cancel" onclick="document.getElementById('lod1-dialog').close()">キャンセル</button>
+    <button class="dialog-btn dialog-btn-primary" onclick="executeLod1Save()">保存</button>
+  </div>
+</dialog>
 
 <script>
 const API = '/api';
@@ -960,6 +1030,7 @@ const buildingCache = new Map();  // persistent fetch cache, max 200 entries
 
 const drawState = { vertices: [] };          // polygon draw
 const boxState  = { active: false, startPixel: null, div: null };  // box draw
+const editState = { active: false, gmlid: null, lod1DrawGmlid: null };
 
 // ── Cesium 3D multi-selection state ──
 const cesium3dState = {
@@ -983,6 +1054,7 @@ const layerKey  = { 'land-use-fill': 'land-use', 'roads-fill': 'roads', 'flood-z
 const exportSelection = new Map();
 // Map layer key → export type string for POST /api/export
 const LAYER_TO_TYPE = { 'land-use': 'land_use', 'roads': 'road', 'flood-zones': 'flood_zone' };
+const BUILDINGS_TILE_URL = window.location.origin + '/tiles/building_footprints/{z}/{x}/{y}';
 
 function initMap() {
   map = new maplibregl.Map({
@@ -1003,7 +1075,7 @@ function initMap() {
     // Building footprints via Martin MVT — all 72,486 buildings, real LOD1 outlines
     map.addSource('buildings', {
       type: 'vector',
-      tiles: [window.location.origin + '/tiles/building_footprints/{z}/{x}/{y}'],
+      tiles: [BUILDINGS_TILE_URL],
       minzoom: 10,
       maxzoom: 16,
     });
@@ -1299,21 +1371,29 @@ function initMap() {
 
     // ── Polygon-draw event listeners ──
     map.on('click', e => {
-      if (selection.mode !== 'polygon') return;
+      if (selection.mode !== 'polygon' && selection.mode !== 'lod1-draw') return;
       if (e.originalEvent.detail === 2) return;  // double-click fires click twice — ignore
       drawState.vertices.push([e.lngLat.lng, e.lngLat.lat]);
       updateDrawLayers();
     });
 
     map.on('dblclick', e => {
-      if (selection.mode !== 'polygon') return;
+      if (selection.mode !== 'polygon' && selection.mode !== 'lod1-draw') return;
       e.preventDefault();
-      if (drawState.vertices.length < 3) { cancelPolygonDraw(); return; }
-      finishPolygonDraw();
+      if (selection.mode === 'lod1-draw') {
+        if (drawState.vertices.length < 3) { cancelPolygonDraw(); setSelectionMode('normal'); return; }
+        finishLod1Draw();
+      } else {
+        if (drawState.vertices.length < 3) { cancelPolygonDraw(); return; }
+        finishPolygonDraw();
+      }
     });
 
     window.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && selection.mode === 'polygon') cancelPolygonDraw();
+      if (e.key === 'Escape' && (selection.mode === 'polygon' || selection.mode === 'lod1-draw')) {
+        cancelPolygonDraw();
+        setSelectionMode('normal');
+      }
     });
 
     // ── Building click / hover ──
@@ -1410,7 +1490,7 @@ function initMap() {
 
 // ── Set selection mode ──
 function setSelectionMode(mode) {
-  if (selection.mode === 'polygon') cancelPolygonDraw();
+  if (selection.mode === 'polygon' || selection.mode === 'lod1-draw') cancelPolygonDraw();
   if (selection.mode === 'box') cancelBoxSelect();
 
   selection.mode = mode;
@@ -1427,7 +1507,7 @@ function setSelectionMode(mode) {
     map.getCanvas().style.cursor = 'crosshair';
   } else {
     map.dragPan.enable();
-    map.getCanvas().style.cursor = mode === 'polygon' ? 'crosshair' : '';
+    map.getCanvas().style.cursor = (mode === 'polygon' || mode === 'lod1-draw') ? 'crosshair' : '';
   }
 }
 
@@ -1624,8 +1704,17 @@ function renderDetailPanelInto(data, headerEl, bodyEl, showLod) {
   // ── Section 4: ID ──
   const idHtml = '<div class="section-title">ID</div>' + attrRow('GML ID', data.gmlid);
 
+  // Add edit button for single-building detail in the Map tab
+  let editBtnHtml = '';
+  if (bodyEl === 'detail-body') {
+    editBtnHtml = `
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid #f1f5f9">
+        <button class="lod-btn" style="width:100%;font-size:0.82rem" onclick="showEditForm()">✏ 編集</button>
+      </div>`;
+  }
+
   document.getElementById(bodyEl).innerHTML =
-    renderNonBuildingSummary() + basicHtml + genericHtml + lodHtml + idHtml;
+    renderNonBuildingSummary() + basicHtml + genericHtml + lodHtml + idHtml + editBtnHtml;
   if (bodyEl === 'detail-body') refreshExportButton();
 }
 
@@ -2616,6 +2705,304 @@ function chatAppendErrorBubble(msg) {
   el.style.cssText = 'align-self:flex-start;margin:0;max-width:80%';
   el.textContent = msg;
   document.getElementById('chat-messages').appendChild(el);
+}
+
+// ─────────────────────────────────────────────
+// ── Building CRUD — Edit, Delete, LOD1, LOD2 ──
+// ─────────────────────────────────────────────
+
+// ── Show edit form ──
+function showEditForm() {
+  const gmlid = [...selection.gmlids][0];
+  if (!gmlid) return;
+  const data = buildingCache.get(gmlid);
+  if (!data) return;
+
+  const a = data.attributes;
+  editState.active = true;
+  editState.gmlid = gmlid;
+
+  const usageOptions = Object.entries(USAGE_LABELS)
+    .map(([code, label]) =>
+      `<option value="${code}" ${a.usage === code ? 'selected' : ''}>${escHtml(label)} (${code})</option>`
+    ).join('');
+
+  const inMapTab = document.getElementById('tab-map').classList.contains('active');
+
+  const formHtml = `
+    <div class="section-title">属性編集</div>
+    <div class="edit-field">
+      <label class="edit-label">建物名称</label>
+      <input class="edit-input" id="edit-name" type="text" value="${escHtml(a.name || '')}" placeholder="なし">
+    </div>
+    <div class="edit-field">
+      <label class="edit-label">用途</label>
+      <select class="edit-input" id="edit-usage">
+        <option value="">—</option>
+        ${usageOptions}
+      </select>
+    </div>
+    <div class="edit-field">
+      <label class="edit-label">建物高さ (m)</label>
+      <input class="edit-input" id="edit-height" type="number" step="0.1" min="0"
+        value="${a.measured_height != null ? a.measured_height : ''}">
+    </div>
+    <div class="edit-field">
+      <label class="edit-label">地上階数</label>
+      <input class="edit-input" id="edit-storeys" type="number" min="1"
+        value="${a.storeys_above_ground != null ? a.storeys_above_ground : ''}">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="lod-btn" style="background:#1a3a5c;color:white;border-color:#1a3a5c;flex:1"
+        onclick="saveEdits()">保存</button>
+      <button class="lod-btn" style="flex:1" onclick="cancelEdit()">キャンセル</button>
+    </div>
+    ${inMapTab ? `
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="lod-btn" style="flex:1;font-size:0.75rem" onclick="startLod1Draw()">
+        フットプリント再描画
+      </button>
+      <label class="lod-btn" style="flex:1;font-size:0.75rem;text-align:center;cursor:pointer">
+        LOD2アップロード
+        <input type="file" accept=".geojson,.json" style="display:none"
+          onchange="handleLod2Upload(this)">
+      </label>
+    </div>` : ''}
+    <div style="margin-top:10px">
+      <button class="lod-btn"
+        style="width:100%;color:#dc2626;border-color:#fecaca;font-size:0.82rem"
+        onclick="confirmDelete()">
+        🗑 このビルを削除
+      </button>
+    </div>
+    <div class="section-title" style="margin-top:14px">ID</div>
+    <div class="attr-row">
+      <span class="attr-label">GML ID</span>
+      <span class="attr-value" style="font-size:0.72rem">${escHtml(gmlid)}</span>
+    </div>
+  `;
+
+  document.getElementById('detail-header').textContent = '建物編集 / Edit Building';
+  document.getElementById('detail-body').innerHTML = formHtml;
+}
+
+// ── Save attribute edits ──
+async function saveEdits() {
+  const gmlid = editState.gmlid;
+  if (!gmlid) return;
+
+  const nameEl    = document.getElementById('edit-name');
+  const usageEl   = document.getElementById('edit-usage');
+  const heightEl  = document.getElementById('edit-height');
+  const storeysEl = document.getElementById('edit-storeys');
+
+  const body = {};
+  if (nameEl)    body.name    = nameEl.value.trim() || null;
+  if (usageEl)   body.usage   = usageEl.value || null;
+  if (heightEl)  body.measured_height        = heightEl.value  ? parseFloat(heightEl.value)  : null;
+  if (storeysEl) body.storeys_above_ground   = storeysEl.value ? parseInt(storeysEl.value)   : null;
+
+  try {
+    const res = await fetch(`${API}/buildings/${encodeURIComponent(gmlid)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    editState.active = false;
+    editState.gmlid  = null;
+    buildingCache.delete(gmlid);
+    await applySelection([...selection.gmlids]);
+    showToast('保存しました');
+  } catch (err) {
+    showToast(`エラー: ${err.message}`, 'error');
+  }
+}
+
+// ── Cancel edit ──
+async function cancelEdit() {
+  const gmlid = editState.gmlid;
+  editState.active = false;
+  editState.gmlid  = null;
+  if (gmlid) {
+    buildingCache.delete(gmlid);
+    await applySelection([...selection.gmlids]);
+  }
+}
+
+// ── Confirm delete dialog ──
+function confirmDelete() {
+  const gmlid = editState.gmlid || [...selection.gmlids][0];
+  if (!gmlid) return;
+  document.getElementById('delete-dialog-gmlid').textContent = gmlid;
+  document.getElementById('delete-dialog').setAttribute('data-gmlid', gmlid);
+  document.getElementById('delete-dialog').showModal();
+}
+
+// ── Execute delete ──
+async function executeDelete() {
+  const gmlid = document.getElementById('delete-dialog').getAttribute('data-gmlid');
+  document.getElementById('delete-dialog').close();
+
+  try {
+    const res = await fetch(`${API}/buildings/${encodeURIComponent(gmlid)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    editState.active = false;
+    editState.gmlid  = null;
+    buildingCache.delete(gmlid);
+    applySelection([]);
+    showToast('削除しました。タイルを更新中…');
+    refreshMapTiles();
+  } catch (err) {
+    showToast(`削除エラー: ${err.message}`, 'error');
+  }
+}
+
+// ── LOD1 footprint redraw ──
+function startLod1Draw() {
+  const gmlid = editState.gmlid || [...selection.gmlids][0];
+  if (!gmlid) return;
+  editState.lod1DrawGmlid = gmlid;
+  setSelectionMode('lod1-draw');
+  showToast('地図上でフットプリントを描画してください（ダブルクリックで完了）');
+}
+
+function finishLod1Draw() {
+  const verts = drawState.vertices;
+  const polygon = { type: 'Polygon', coordinates: [[...verts, verts[0]]] };
+  cancelPolygonDraw();
+  setSelectionMode('normal');
+
+  const gmlid = editState.lod1DrawGmlid;
+  document.getElementById('lod1-dialog').setAttribute('data-polygon', JSON.stringify(polygon));
+  document.getElementById('lod1-dialog-gmlid').textContent = gmlid;
+  document.getElementById('lod1-height-input').value = '';
+  document.getElementById('lod1-dialog').showModal();
+  // focus the height input after dialog opens
+  setTimeout(() => document.getElementById('lod1-height-input').focus(), 50);
+}
+
+async function executeLod1Save() {
+  const dialog   = document.getElementById('lod1-dialog');
+  const polygon  = JSON.parse(dialog.getAttribute('data-polygon'));
+  const heightStr = document.getElementById('lod1-height-input').value;
+  const height   = parseFloat(heightStr);
+  if (!height || height <= 0) {
+    showToast('有効な高さ（0より大きい数値）を入力してください', 'error');
+    return;
+  }
+  const gmlid = editState.lod1DrawGmlid;
+  dialog.close();
+
+  try {
+    const res = await fetch(`${API}/buildings/${encodeURIComponent(gmlid)}/lod1`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ polygon, height }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    buildingCache.delete(gmlid);
+    await applySelection([...selection.gmlids]);
+    showToast('LOD1を更新しました。タイルを更新中…');
+    refreshMapTiles();
+  } catch (err) {
+    showToast(`LOD1更新エラー: ${err.message}`, 'error');
+  }
+}
+
+// ── LOD2 surface upload ──
+async function handleLod2Upload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';  // reset for re-use
+
+  const gmlid = editState.gmlid || [...selection.gmlids][0];
+  if (!gmlid) return;
+
+  let surfaces;
+  try {
+    const text = await file.text();
+    const geojson = JSON.parse(text);
+    surfaces = parseLod2GeoJSON(geojson);
+    if (surfaces.length === 0) throw new Error('LOD2サーフェスが見つかりません');
+  } catch (err) {
+    showToast(`ファイル解析エラー: ${err.message}`, 'error');
+    return;
+  }
+
+  const counts = surfaces.reduce((acc, s) => { acc[s.type] = (acc[s.type] || 0) + 1; return acc; }, {});
+  const summary = `壁 ${counts.wall || 0}面、屋根 ${counts.roof || 0}面、地面 ${counts.ground || 0}面`;
+  if (!confirm(`${summary}\nLOD2サーフェスを更新しますか？`)) return;
+
+  try {
+    const res = await fetch(`${API}/buildings/${encodeURIComponent(gmlid)}/lod2`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ surfaces }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    buildingCache.delete(gmlid);
+    await applySelection([...selection.gmlids]);
+    showToast('LOD2を更新しました');
+  } catch (err) {
+    showToast(`LOD2更新エラー: ${err.message}`, 'error');
+  }
+}
+
+function parseLod2GeoJSON(geojson) {
+  const TYPE_MAP = {
+    'wall': 'wall', 'WallSurface': 'wall', '34': 'wall',
+    'roof': 'roof', 'RoofSurface': 'roof', '33': 'roof',
+    'ground': 'ground', 'GroundSurface': 'ground', '35': 'ground',
+  };
+  const surfaces = [];
+  if (geojson.type !== 'FeatureCollection') return surfaces;
+  for (const f of (geojson.features || [])) {
+    const prop = f.properties || {};
+    const rawType = prop.surface_type ?? prop.type ?? prop.semanticType ?? 'wall';
+    const type = TYPE_MAP[String(rawType)] || 'wall';
+    const geom = f.geometry;
+    if (!geom) continue;
+    const polys = geom.type === 'Polygon'
+      ? [geom.coordinates]
+      : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+    for (const coords of polys) {
+      surfaces.push({ type, geometry: { type: 'Polygon', coordinates: coords } });
+    }
+  }
+  return surfaces;
+}
+
+// ── Refresh Martin MVT tile source ──
+function refreshMapTiles() {
+  if (!map) return;
+  const src = map.getSource('buildings');
+  if (!src) return;
+  src.setTiles([`${BUILDINGS_TILE_URL}?_t=${Date.now()}`]);
+}
+
+// ── Toast notification ──
+function showToast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.background = type === 'error' ? '#dc2626' : '#1a3a5c';
+  el.style.display = 'block';
+  clearTimeout(el._tid);
+  el._tid = setTimeout(() => { el.style.display = 'none'; }, 3500);
 }
 </script>
 </body>
