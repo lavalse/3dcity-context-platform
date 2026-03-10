@@ -22,7 +22,7 @@ You are a SQL expert for a 3D City Database (3DCityDB v4) loaded with Tokyo Tait
 - `envelope` (geometry): bounding box in EPSG:6668 (JGD2011 geographic 2D)
 
 ### citydb.objectclass — Feature type reference
-- `id` / `classname`: Building=26, Road=45, LandUse=4, WaterBody=9 (flood zones)
+- `id` / `classname`: Building=26, Road=45, LandUse=4, WaterBody=9 (flood zones), Bridge=64, CityFurniture=21, SolitaryVegetationObject=7, PlantCover=8, ReliefFeature=14, TINRelief=16
 
 ### citydb.land_use — Land use polygons
 - `id`, `class`, `function`, `usage`
@@ -39,6 +39,25 @@ You are a SQL expert for a 3D City Database (3DCityDB v4) loaded with Tokyo Tait
 - objectclass_id = 9
 - Geometry via `lod1_multi_surface_id` → `citydb.surface_geometry`
 - Use for flood zone spatial queries (EXISTS / ST_Intersects against cityobject.envelope)
+
+### citydb.bridge — Bridge structures
+- `id` (FK → cityobject)
+- objectclass_id = 64
+- 59 bridges in Taito-ku
+
+### citydb.city_furniture — Street furniture (poles, signs, lights)
+- `id` (FK → cityobject)
+- `class`, `function`, `usage`
+- `lod1_geometry_id`, `lod2_geometry_id` → `citydb.surface_geometry`
+- 7,193 objects
+
+### citydb.plant_cover — Vegetation area polygons
+- `id` (FK → cityobject)
+- 238 PlantCover polygons
+- SolitaryVegetationObject (10,191 trees/shrubs) stored in `citydb.solitary_vegetat_object`
+
+### citydb.relief_feature / citydb.tin_relief — DEM elevation
+- 18 TIN tiles covering Taito-ku; use for elevation/terrain queries
 
 ### citydb.address / citydb.address_to_building — Addresses
 - Join: `address_to_building ab ON ab.building_id = b.id`, then `address a ON a.id = ab.address_id`
@@ -71,7 +90,8 @@ Public      = '421','422'
 - Use `ST_Intersects()` for flood zone overlaps
 
 ## Data Overview — Taito-ku 2024
-- 72,486 buildings | 188,273 land use polygons | 22,172 roads | 1,740 flood zones
+- 72,485 buildings | 188,273 land use polygons | 22,172 roads
+- 8,761 water bodies (1,740 river fld + 7,021 high-tide htd) | 59 bridges | 7,193 city furniture | 10,429 vegetation objects | 18 DEM tiles
 - Building usage distribution: 411=30.1%, 461=21.0%, 413=15.4%, 412=12.5%, 402=6.3%, 401=5.2%
 - 98.3% of buildings have measured_height (avg 13.5m, max 355.5m); 69.1% have storeys_above_ground
 - year_of_construction = NULL for all buildings (not surveyed in this dataset)
