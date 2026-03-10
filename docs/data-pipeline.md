@@ -33,7 +33,8 @@ Track DB snapshots here so the team knows which dump to use.
 
 | Version | Date | Contents | File | Location |
 |---|---|---|---|---|
-| v0.2.0 | TBD | bldg (72,486 buildings), tran, luse, urf, fld | `taito-ku_3dcitydb_v0.2.0.dump` | TBD |
+| v0.3.0 | 2026-03-10 | All 9 standard types: bldg, tran, luse, fld, htd, brid, dem, frn, veg | `taito-ku_3dcitydb_v0.3.0.dump` | TBD |
+| v0.2.0 | TBD | bldg (72,486 buildings), tran, luse, fld (4 types only) | `taito-ku_3dcitydb_v0.2.0.dump` | TBD |
 | v0.1.0 | 2026-02-22 | bldg only (72,486 buildings, LOD1+LOD2) | `taito-ku_3dcitydb_20260222_bldg.dump` | TBD |
 
 **To create a new snapshot:**
@@ -53,9 +54,10 @@ docker compose up -d db     # Start DB container
 | Tag | Contents |
 |---|---|
 | `v0.1.0` | Project scaffolding, docs, configs. Building data imported. |
-| `v0.2.0` | All feature types imported (tran, luse, urf, fld). Attribute issue resolved. |
-| `v0.3.0` | Backend MVP — NL-to-SQL working end-to-end. |
-| `v0.4.0` | Frontend MVP — working prototype for city staff. |
+| `v0.2.0` | bldg + tran + luse + fld imported (4 types). Attribute issue resolved. |
+| `v0.3.0` | All 9 standard feature types imported (added htd, brid, dem, frn, veg). |
+| `v0.4.0` | Backend MVP — NL-to-SQL working end-to-end. |
+| `v0.5.0` | Frontend MVP — working prototype for city staff. |
 
 ## What's Stored Where
 
@@ -95,25 +97,30 @@ docker compose up -d db
 docker compose up -d
 ```
 
-## Current Data State (as of 2026-02-22) — v0.2.0
+## Current Data State (as of 2026-03-10) — v0.3.0
 
 ### Imported ✓
 
 | Feature | DB classname | Count | Notes |
 |---|---|---|---|
-| Buildings (bldg) | Building | 72,486 | LOD1+LOD2 with textures |
+| Buildings (bldg) | Building | 72,485 | LOD1+LOD2 with textures |
 | Building surfaces | BuildingWallSurface etc. | 638,485 | Wall, roof, ground |
 | Roads (tran) | Road | 22,172 | + 25,769 TrafficArea |
 | Land use (luse) | LandUse | 188,273 | Full ward coverage |
-| Flood zones (fld) | WaterBody | 1,740 | 3 river watersheds |
+| River flood zones (fld) | WaterBody | 1,740 | 3 river watersheds |
+| High-tide flood zones (htd) | WaterBody | 7,021 | Storm surge hazard zones |
+| Bridges (brid) | Bridge | 59 | LOD1 + LOD2 |
+| DEM elevation (dem) | ReliefFeature | 18 | TIN tiles covering full ward |
+| City furniture (frn) | CityFurniture | 7,193 | Poles, signs, lights (Ueno/Asakusa) |
+| Vegetation (veg) | SolitaryVegetationObject / PlantCover | 10,429 | 10,191 + 238 PlantCover |
 
 ### Not imported / dropped
 
 | Feature | Reason |
 |---|---|
 | Urban planning zones (urf) | PLATEAU ADE type — standard importer drops these (0 records) |
+| Landslide hazard zones (lsld) | PLATEAU ADE type — standard importer drops these (0 records) |
 | uro: ADE attributes | buildingStructureType, detailedUsage, fireproofStructureType, floodRisk — dropped by importer |
-| brid, frn, veg | Not yet imported (secondary priority) |
 
 ### Known Attribute Issues
 
