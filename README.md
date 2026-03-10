@@ -8,9 +8,14 @@ A prototype that lets Tokyo Taito-ku (台東区) city staff ask natural language
 
 The app has three tabs:
 
-- **クエリ / Query** — Type a question; Claude generates SQL, shows it for review, executes it, and returns tabular results.
+- **クエリ / Query** — Type a question; Claude generates SQL, shows it for review, executes it, and returns tabular results. Query results are highlighted on the map in sync with the table — click a row to pan to the building, click a building to select its row.
 - **チャット / Chat** — Conversational interface powered by Claude's agentic tool-use loop. Claude autonomously runs one or more SQL queries, interprets results, and answers in Japanese. Multi-turn conversation with history.
-- **地図 / Map** — MapLibre GL JS map with MVT building footprints and themed layers (land use, roads, flood zones). Click a building to see its attributes and 3D LOD2 surfaces.
+- **地図 / Map** — Full interactive map with MVT building footprints and themed layers (land use, roads, flood zones). Features:
+  - Click any feature (building, road, land use, flood zone) to see its attributes
+  - Switch to **Cesium 3D** view for LOD2 surface rendering
+  - **Multi-selection**: box-draw or polygon-draw to select multiple buildings
+  - **Export**: download selected features as GeoJSON (2D), GeoJSON 3D (LOD2 extrusions), or CityJSON
+  - **CRUD edit panel**: edit building attributes, replace LOD1/LOD2 geometry, delete buildings
 
 Example questions:
 - 台東区で10階以上のビルは何棟？
@@ -22,8 +27,8 @@ Example questions:
 - **Database**: PostgreSQL 15 + PostGIS + [3DCityDB v4](https://github.com/3dcitydb/3dcitydb)
 - **Data**: Tokyo Taito-ku 2024 PLATEAU CityGML (CC BY 4.0)
 - **Backend**: Python 3.12 + FastAPI + asyncpg + Anthropic Claude API (claude-sonnet-4-6)
-- **Tiles**: [Martin](https://github.com/maplibre/martin) MVT tile server
-- **Frontend**: Plain HTML/CSS/JS + MapLibre GL JS + deck.gl (no build step)
+- **Tiles**: [Martin](https://github.com/maplibre/martin) MVT tile server (tile cache disabled for real-time updates)
+- **Frontend**: Plain HTML/CSS/JS + MapLibre GL JS + deck.gl + Cesium (no build step)
 - **Infrastructure**: Docker Compose
 
 ## Quick Start
@@ -34,19 +39,51 @@ See [docs/setup.md](docs/setup.md) for the full setup guide.
 cp .env.example .env        # Set ANTHROPIC_API_KEY
 docker compose up -d db     # Start 3DCityDB
 # Download and import PLATEAU data (see docs/setup.md)
-# Create materialized views for map tiles (see docs/setup.md step 5)
+# Run migrations to create tile tables (see docs/setup.md step 5)
 docker compose up -d        # Start full stack
 open http://localhost:3000
 ```
 
 ## Backend API
 
+### Query & Chat
+
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | DB ping + LLM mode status |
 | `POST /api/query` | Single-turn NL-to-SQL (placeholder or Claude) |
 | `POST /api/chat` | Streaming SSE chat with agentic tool-use loop |
+
+### Buildings (Read)
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/buildings/search` | Search buildings by name/gmlid prefix |
 | `GET /api/buildings/{gmlid}` | Building attributes + LOD1/LOD2 geometry |
+| `GET /api/buildings/{gmlid}/export/geojson3d` | LOD2 surfaces as GeoJSON 3D |
+| `GET /api/buildings/{gmlid}/export/cityjson` | LOD2 surfaces as CityJSON |
+| `POST /api/buildings/export/batch` | Batch LOD2 export for box-selected buildings |
+
+### Buildings (Write)
+
+| Endpoint | Description |
+|---|---|
+| `PATCH /api/buildings/{gmlid}` | Update name / usage / height / storeys |
+| `DELETE /api/buildings/{gmlid}` | Cascade-delete building and all its geometry |
+| `PUT /api/buildings/{gmlid}/lod1` | Replace LOD1 solid from GeoJSON Polygon + height |
+| `PUT /api/buildings/{gmlid}/lod2` | Replace LOD2 thematic surfaces from GeoJSON |
+
+### Export
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/export` | GeoJSON FeatureCollection for mixed feature types (buildings, roads, land use, flood zones) |
+
+### Features
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/features/{gmlid}` | Attributes for any non-building feature (road, land use, flood zone) |
 
 ## Chat Endpoint — How It Works
 

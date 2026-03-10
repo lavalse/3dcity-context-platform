@@ -9,76 +9,94 @@ A prototype that lets Tokyo Taito-ku city staff ask natural language questions a
 ```
 City Staff (Japanese / English)
           │
-          │  natural language question
+          │  natural language question / map interaction
           ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   Frontend (Browser)                    │
-│  - Query input (NL text)                               │
-│  - SQL display (generated SQL, editable)               │
-│  - Results table                                        │
-│  - Basic map view (GeoJSON overlay)                    │
+│  Query tab: NL input → SQL review → tabular results    │
+│             results highlighted on map (table-map sync) │
+│  Chat tab:  conversational, streaming SSE               │
+│  Map tab:   MVT tiles (MapLibre) + Cesium 3D LOD2      │
+│             multi-feature selection, export, CRUD edit  │
 └────────────────────┬────────────────────────────────────┘
-                     │  HTTP POST /api/query
+                     │  HTTP  /api/*
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │                FastAPI Backend (Python)                 │
 │                                                         │
-│  1. Schema Context Builder                              │
-│     - Loads relevant table descriptions                 │
-│     - Injects PLATEAU codelist values                   │
-│     - Selects few-shot SQL examples                     │
-│                                                         │
-│  2. SQL Generator (Claude API)                          │
-│     - System prompt: schema context + codelists         │
-│     - User prompt: natural language question            │
-│     - Returns: SQL query + explanation                  │
-│                                                         │
-│  3. SQL Runner (asyncpg)                                │
-│     - Read-only DB user (SELECT only)                   │
-│     - Auto-injects LIMIT 1000 if missing                │
-│     - 30-second query timeout                           │
-│     - Returns: rows + column names + row count          │
-└────────────────────┬────────────────────────────────────┘
-                     │  SQL
-                     ▼
+│  NL-to-SQL: schema context → Claude API → SQL           │
+│  Chat: agentic tool-use loop (up to 4 SQL rounds)      │
+│  Buildings read: attrs + LOD1/LOD2 geometry + export   │
+│  Buildings write: PATCH / DELETE / PUT lod1 / PUT lod2 │
+│  Export: GeoJSON FeatureCollection (mixed types)       │
+└──────┬─────────────────────────────────┬────────────────┘
+       │  asyncpg (SELECT)               │  asyncpg (write)
+       ▼                                 ▼
 ┌─────────────────────────────────────────────────────────┐
 │       PostgreSQL 15 + PostGIS + 3DCityDB v4             │
 │                                                         │
 │  Schema: citydb                                         │
 │  Data: Taito-ku 2024 PLATEAU CityGML                   │
-│  Feature types: bldg, tran, luse, fld, urf, brid       │
+│  Feature types: bldg, tran, luse, fld                  │
 │  CRS: JGD2011 geographic 2D (EPSG:6668)                │
-└─────────────────────────────────────────────────────────┘
+└───────────────────────────┬─────────────────────────────┘
+                            │  auto-discover tables
+                            ▼
+                  ┌──────────────────┐
+                  │  Martin (MVT)    │
+                  │  tile cache: OFF │
+                  │  /tiles/*        │
+                  └──────────────────┘
 ```
 
 ## Component Responsibilities
 
-### Backend (`backend/`)
+### Backend (`backend/app/`)
 
 | Module | Purpose |
 |---|---|
-| `app/main.py` | FastAPI app setup, CORS, route mounting |
-| `app/config.py` | Settings from environment variables |
-| `app/database.py` | asyncpg connection pool, query execution |
-| `app/api/query.py` | POST `/api/query` — main NL-to-SQL endpoint |
-| `app/api/health.py` | GET `/api/health` — DB connectivity check |
-| `app/services/sql_generator.py` | Calls Claude API with schema context |
-| `app/services/sql_runner.py` | Validates and executes SQL safely |
-| `app/services/schema_context.py` | Builds LLM prompt context from schema docs |
-| `app/prompts/` | Schema descriptions and few-shot examples (Markdown) |
+| `main.py` | FastAPI app setup, CORS (GET/POST/PATCH/PUT/DELETE), route mounting |
+| `config.py` | Settings from environment variables; `use_llm` checks key format |
+| `database.py` | asyncpg connection pool; `run_query()` — SELECT-only, auto-LIMIT 1000, 30s timeout |
+| `database_write.py` | Write utilities: `execute_write`, `execute_transaction`, `refresh_mv` |
+| `api/query.py` | `POST /api/query` — single-turn NL-to-SQL |
+| `api/chat.py` | `POST /api/chat` — streaming SSE agentic chat |
+| `api/health.py` | `GET /api/health` — DB ping + LLM mode |
+| `api/buildings.py` | Read endpoints: search, detail, LOD2 export (GeoJSON 3D / CityJSON), batch export |
+| `api/buildings_write.py` | Write endpoints: PATCH attrs, DELETE, PUT lod1, PUT lod2 |
+| `api/export.py` | `POST /api/export` — GeoJSON FeatureCollection for mixed feature types |
+| `api/features.py` | `GET /api/features/{gmlid}` — non-building feature attributes |
+| `services/sql_generator.py` | Two-mode SQL generator: Claude API or keyword placeholder |
+| `services/schema_context.py` | Loads `system_prompt.md` for LLM context |
+| `prompts/system_prompt.md` | Schema, codelists, SQL rules for NL-to-SQL |
+| `prompts/chat_system_prompt.md` | System prompt + `execute_sql` tool definition for chat |
 
 ### Frontend (`frontend/`)
 
-Single-page HTML application, no build step required. Served by nginx in Docker, or directly from the filesystem during development.
+Single-page HTML application, no build step required. Served by nginx in Docker.
+
+| Tab | Key libraries | Features |
+|---|---|---|
+| Query | — | NL input, SQL review, results table, map highlight sync |
+| Chat | — | SSE streaming, multi-turn history, token-by-token display |
+| Map | MapLibre GL JS, deck.gl, Cesium | MVT tiles, Cesium 3D LOD2, box/polygon multi-select, GeoJSON/CityJSON export, CRUD edit panel |
 
 ### Infrastructure (`infra/`)
 
-- `infra/nginx/nginx.conf` — Reverse proxy: routes `/api/*` to backend, serves frontend static files
+- `infra/nginx/nginx.conf` — Reverse proxy: `/api/*` → backend:8000, `/tiles/*` → martin:3000, static frontend
 
 ### Data (`data/`)
 
-- `data/citygml/` — Downloaded PLATEAU CityGML files (not committed, can be gigabytes)
+- `data/citygml/` — Downloaded PLATEAU CityGML files (not committed)
 - `data/import/run-import.sh` — Runs `3dcitydb/impexp` Docker image to load GML into DB
+- `data/migrations/001_building_footprints_mv.sql` — Creates `citydb.building_footprints` table (initially as MV, later converted to a regular table for synchronous write support)
+- `data/migrations/002_building_footprints_table.sql` — Converts MV to regular table, enables real-time tile updates after LOD1 edits
+
+### Martin (MVT tile server)
+
+Martin auto-discovers `citydb.building_footprints` and serves it as vector tiles at `/tiles/building_footprints/{z}/{x}/{y}.pbf`.
+
+**Tile cache is disabled** (`-C 0` flag) so that LOD1 geometry edits are reflected immediately in the next tile request — no cache invalidation needed.
 
 ## Key Technical Decisions
 
@@ -109,44 +127,60 @@ v4 maps CityGML 2.0 concepts directly to columns. PLATEAU data is CityGML 2.0. T
 
 Trust and transparency. City staff should be able to verify what the system queried. This also lets them spot errors and refine questions.
 
+### Read/Write DB Path Separation
+
+The read path (`database.py::run_query`) enforces SELECT-only and auto-injects LIMIT. The write path (`database_write.py`) is a separate module with explicit transaction support — this keeps the safety guarantees of the read path intact.
+
+### Synchronous Tile Updates
+
+Early versions used a `MATERIALIZED VIEW` for building footprints and triggered `REFRESH MATERIALIZED VIEW CONCURRENTLY` asynchronously after writes. This caused 3–5 s stale tiles. The current design:
+
+1. `building_footprints` is a **regular table** (migration 002) — rows are updated synchronously before the HTTP response is returned.
+2. Martin's in-memory tile cache is **disabled** (`-C 0`) — every tile request hits the DB directly.
+3. The frontend calls `refreshMapTiles()` immediately after a save/delete response (no `setTimeout` delay).
+
 ### PLATEAU-Specific Challenges
 
-1. **Codelists**: `bldg:function` codes like `'0401'` mean "residential" — the LLM must know these mappings to generate correct WHERE clauses.
-
-2. **uro: ADE attributes**: PLATEAU's urban planning attributes (`uro:buildingStructureType`, `uro:orgUsage`) are stored as generic attributes in 3DCityDB v4. Their exact storage location depends on how the importer handles the ADE schema.
-
-3. **Geometry CRS**: All geometries are in JGD2011 (EPSG:6668). Spatial queries use PostGIS functions (`ST_Intersects`, `ST_Within`, `ST_DWithin`).
+1. **Codelists**: `bldg:usage` codes like `'411'` mean "住宅 (detached house)" — the LLM must know these mappings.
+2. **uro: ADE attributes**: PLATEAU's urban planning attributes were dropped during import (`cityobject_genericattrib` is empty in Taito-ku 2024).
+3. **Geometry CRS**: All geometries are in JGD2011 (EPSG:6668, lat/lon order). API responses flip coordinates to lon/lat for GeoJSON.
 
 ## Data Flow: Query Lifecycle
 
 ```
-1. User types: "台東区で1981年以前に建てられた木造建物は何棟ありますか？"
-   (How many wooden buildings in Taito-ku were built before 1981?)
+1. User types: "台東区で10階以上のビルは何棟？"
 
 2. Schema context builder injects:
-   - BUILDING table description (measured_height, year_of_construction, etc.)
-   - uro:buildingStructureType codelist (1 = 木造, 2 = 鉄骨造, 3 = RC造, ...)
-   - Few-shot example of a similar construction-year query
+   - BUILDING table description (measured_height, storeys_above_ground, usage, etc.)
+   - PLATEAU codelist values
+   - Few-shot SQL examples
 
-3. Claude API returns:
-   SELECT COUNT(*) AS building_count
-   FROM citydb.building b
-   JOIN citydb.cityobject co ON co.id = b.id
-   WHERE b.year_of_construction < 1981
-     AND b.year_of_construction IS NOT NULL;
-   -- (plus uro join for structure type when ADE is available)
+3. Claude API returns SQL + explanation.
 
-4. SQL displayed to user, user confirms or edits.
+4. SQL displayed to user for review (editable).
 
-5. asyncpg executes against PostgreSQL (read-only user, 30s timeout).
+5. asyncpg executes against PostgreSQL (SELECT-only, 30s timeout).
 
-6. Results returned: {"columns": ["building_count"], "rows": [[1247]], "count": 1}
+6. Results returned as {"columns": [...], "rows": [...], "count": N}
+
+7. Frontend renders table + highlights matching buildings on map.
+   Clicking a row pans the map; clicking a tile feature selects its row.
 ```
 
-## Future Directions
+## Data Flow: LOD1 Edit Lifecycle
 
-- **Map visualization**: Highlight result buildings on a 2D/3D map (Cesium, Maplibre GL)
-- **Saved queries**: Let staff save and share useful queries
-- **Multi-dataset joins**: Join building data with flood zones, urban planning zones
-- **Export**: Download results as CSV or GeoJSON
-- **Auth**: Taito-ku staff login (currently open, prototype only)
+```
+1. User draws new footprint polygon on map, enters height.
+
+2. PUT /api/buildings/{gmlid}/lod1
+   - Deletes old surface_geometry rows
+   - Inserts new solid geometry (WKT, EPSG:6668)
+   - Updates building_footprints table row synchronously
+
+3. HTTP 200 returned.
+
+4. Frontend calls refreshMapTiles() immediately:
+   src.setTiles([BUILDINGS_TILE_URL + '?_t=' + Date.now()])
+   → Martin fetches fresh tile from DB (no cache)
+   → Updated footprint visible within ~1s
+```
