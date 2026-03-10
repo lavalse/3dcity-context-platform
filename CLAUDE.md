@@ -39,10 +39,20 @@ pgAdmin UI is at http://localhost:5050 (email: admin@citydb.local, password: adm
 
 ```bash
 # After downloading and unzipping PLATEAU data to data/citygml/
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/bldg
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/tran
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/luse
-./data/import/run-import.sh 13106_taito-ku_city_2024_citygml_1_op/udx/fld
+# Standard CityGML 2.0 types (all imported)
+./data/import/run-import.sh udx/bldg   # Buildings (72,485)
+./data/import/run-import.sh udx/tran   # Roads (22,172)
+./data/import/run-import.sh udx/luse   # Land use (188,273)
+./data/import/run-import.sh udx/fld    # River flood zones (1,740)
+./data/import/run-import.sh udx/brid   # Bridges (59)
+./data/import/run-import.sh udx/dem    # DEM elevation (18 ReliefFeature)
+./data/import/run-import.sh udx/frn    # City furniture (7,193)
+./data/import/run-import.sh udx/htd    # High-tide flood zones (7,021)
+./data/import/run-import.sh udx/veg    # Vegetation (10,191 + 238 PlantCover)
+
+# PLATEAU ADE types (urf: / lsld:) — 0 objects imported; ADE not supported by standard importer
+# ./data/import/run-import.sh udx/urf
+# ./data/import/run-import.sh udx/lsld
 ```
 
 ### Verify data import
@@ -105,7 +115,7 @@ browser
 ## Database Schema
 
 All tables are in the `citydb` PostgreSQL schema. The current import contains:
-- **72,486 buildings**, 188,273 land use polygons, 22,172 road segments, 1,740 flood zone polygons
+- **72,485 buildings**, 188,273 land use polygons, 22,172 road segments, 8,761 water bodies (1,740 fld + 7,021 htd), 59 bridges, 7,193 city furniture, 10,429 vegetation objects, 18 DEM relief features
 
 Key tables:
 
@@ -114,6 +124,11 @@ Key tables:
 - `citydb.thematic_surface` — LOD2 wall/roof/ground surface breakdown; `objectclass_id`: 33=Roof, 34=Wall, 35=Ground (verified against `citydb.objectclass` table)
 - `citydb.surface_geometry` — Actual PostGIS geometries; linked from `building` via `lod1_solid_id` / `lod2_solid_id`
 - `citydb.land_use` — Land use zone polygons
+- `citydb.waterbody` — Flood hazard zones (both river fld and high-tide htd; objectclass_id=9)
+- `citydb.bridge` — Bridge structures (59 bridges)
+- `citydb.city_furniture` — Street furniture: poles, signs, lights (7,193 objects)
+- `citydb.plant_cover` — Vegetation areas (238 PlantCover); SolitaryVegetationObject (10,191) in cityobject
+- `citydb.relief_feature` / `citydb.tin_relief` — DEM elevation TIN (18 tiles)
 - `citydb.cityobject_genericattrib` — Key-value store for overflow attributes; PLATEAU `uro:` ADE attributes would land here (currently empty — ADE was dropped during import)
 
 Coordinate system: **EPSG:6668** (JGD2011 geographic 2D, lon/lat degrees). Use this SRID in PostGIS functions.

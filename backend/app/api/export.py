@@ -26,12 +26,15 @@ _VIEW_CONFIG: dict[str, tuple[str, list[str]]] = {
     "land_use":    ("citydb.land_use_footprints",    ["gmlid", "class", "usage"]),
     "road":        ("citydb.road_footprints",        ["gmlid", "class", "function", "usage"]),
     "flood_zone":  ("citydb.flood_zone_footprints",  ["gmlid", "class", "function", "usage"]),
+    "bridge":      ("citydb.bridge_footprints",      ["gmlid", "class", "function", "usage"]),
+    "furniture":   ("citydb.furniture_footprints",   ["gmlid", "class", "function", "usage"]),
+    "vegetation":  ("citydb.vegetation_footprints",  ["gmlid", "class", "usage"]),
 }
 
 
 class ExportItem(BaseModel):
     gmlid: str
-    type: Literal["building", "land_use", "road", "flood_zone"]
+    type: Literal["building", "land_use", "road", "flood_zone", "bridge", "furniture", "vegetation"]
 
 
 class ExportRequest(BaseModel):
