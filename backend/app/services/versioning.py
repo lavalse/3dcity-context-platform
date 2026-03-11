@@ -21,6 +21,12 @@ async def archive_and_next_version(conn, gmlid: str) -> int:
     Mark the current version of gmlid as 'archived' and return the next version number.
     If no version exists yet, returns 1 (first version).
     """
+    # Serialize version assignment per feature to avoid duplicate MAX(version)+1
+    # results under concurrent writes for the same gmlid.
+    await conn.fetchval(
+        "SELECT pg_advisory_xact_lock(hashtext($1), 0)",
+        gmlid,
+    )
     await conn.execute(
         "UPDATE citydb.feature_versions SET status = 'archived' "
         "WHERE gmlid = $1 AND status = 'current'",

@@ -220,15 +220,22 @@ async def get_building_detail(gmlid: str):
         else 10.0
     )
 
+    lod1_features = [
+        make_feature(r["geom_json"], {"height": lod1_height})
+        for r in lod1_rows
+        if r["geom_json"]
+    ]
     lod1_fc = {
         "type": "FeatureCollection",
-        "features": [make_feature(r["geom_json"], {"height": lod1_height}) for r in lod1_rows],
+        "features": lod1_features,
     }
 
     # Split LOD2 surfaces by type
     # Verified against citydb.objectclass: 33=BuildingRoofSurface, 34=BuildingWallSurface, 35=BuildingGroundSurface
     wall_features, roof_features, ground_features = [], [], []
     for r in lod2_rows:
+        if not r["geom_json"]:
+            continue
         feat = make_feature(r["geom_json"], {"surface_type": r["objectclass_id"]})
         oc = r["objectclass_id"]
         if oc == 33:

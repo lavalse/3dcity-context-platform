@@ -16,7 +16,7 @@ from app.services.versioning import archive_and_next_version, insert_version
 
 router = APIRouter()
 
-# Maps objectclass.classname → type-specific attribute query (returns name + type attrs)
+# Maps objectclass.classname → type-specific attribute query (returns type attrs)
 CLASSNAME_QUERIES = {
     'LandUse':   "SELECT lu.class, lu.function, lu.usage FROM citydb.land_use lu WHERE lu.id = $1",
     'Road':      "SELECT tc.class, tc.function, tc.usage FROM citydb.transportation_complex tc WHERE tc.id = $1",
@@ -24,7 +24,7 @@ CLASSNAME_QUERIES = {
     'Bridge':    "SELECT br.class, br.function, br.usage FROM citydb.bridge br WHERE br.id = $1",
     'CityFurniture':    "SELECT cf.class, cf.function, cf.usage FROM citydb.city_furniture cf WHERE cf.id = $1",
     'PlantCover':       "SELECT pc.class, pc.function, pc.usage FROM citydb.plant_cover pc WHERE pc.id = $1",
-    'SolitaryVegetationObject': None,  # no class/function/usage columns
+    'SolitaryVegetationObject': "SELECT sv.class, sv.function, sv.usage FROM citydb.solitary_vegetat_object sv WHERE sv.id = $1",
 }
 
 # Maps classname → LOD1 footprint + height query
@@ -57,10 +57,36 @@ LOD1_QUERIES = {
 
 # Tables that support class/function/usage edits
 CLASSNAME_TO_TABLE = {
+    'LandUse':       'citydb.land_use',
+    'Road':          'citydb.transportation_complex',
+    'WaterBody':     'citydb.waterbody',
     'Bridge':        'citydb.bridge',
     'CityFurniture': 'citydb.city_furniture',
     'PlantCover':    'citydb.plant_cover',
+    'SolitaryVegetationObject': 'citydb.solitary_vegetat_object',
 }
+
+EDITABLE_FIELDS = {
+    'LandUse': {'name', 'class', 'function', 'usage'},
+    'Road': {'name', 'class', 'function', 'usage'},
+    'WaterBody': {'name', 'class', 'function', 'usage'},
+    'Bridge': {'name', 'class', 'function', 'usage'},
+    'CityFurniture': {'name', 'class', 'function', 'usage'},
+    'PlantCover': {'name', 'class', 'function', 'usage'},
+    'SolitaryVegetationObject': {'name', 'class', 'function', 'usage'},
+}
+
+
+async def _get_feature_attr_snapshot(conn, gmlid: str, classname: str, feature_id: int) -> dict:
+    name_row = await conn.fetchrow(
+        "SELECT name FROM citydb.cityobject WHERE gmlid = $1", gmlid
+    )
+    snapshot: dict = {"name": name_row["name"]}
+    q = CLASSNAME_QUERIES.get(classname)
+    if q:
+        attr_row = await conn.fetchrow(q, feature_id)
+        snapshot.update(dict(attr_row))
+    return snapshot
 
 
 async def _get_feature_data(conn, gmlid: str) -> dict:
@@ -126,6 +152,7 @@ async def get_feature(gmlid: str):
 async def patch_feature(gmlid: str, request: Request):
     """Update name, class, function, usage for bridge/furniture/vegetation features."""
     body = await request.json()
+    requested_fields = set(body.keys())
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
@@ -146,9 +173,19 @@ async def patch_feature(gmlid: str, request: Request):
             if classname not in CLASSNAME_QUERIES:
                 raise HTTPException(status_code=422, detail=f"Feature type '{classname}' not editable here")
 
+            unsupported_fields = requested_fields - EDITABLE_FIELDS.get(classname, set())
+            if unsupported_fields:
+                fields = ", ".join(sorted(unsupported_fields))
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unsupported fields for {classname}: {fields}",
+                )
+
+            if not requested_fields:
+                return await _get_feature_data(conn, gmlid)
+
             async with conn.transaction():
-                # Version: archive current before update
-                next_ver = await archive_and_next_version(conn, gmlid)
+                before_snapshot = await _get_feature_attr_snapshot(conn, gmlid, classname, feature_id)
 
                 # Update cityobject.name if provided
                 if "name" in body:
@@ -177,16 +214,10 @@ async def patch_feature(gmlid: str, request: Request):
                             *values,
                         )
 
-                # Read updated attrs for snapshot
-                name_row = await conn.fetchrow(
-                    "SELECT name FROM citydb.cityobject WHERE gmlid = $1", gmlid
-                )
-                attr_snapshot: dict = {"name": name_row["name"]}
-                q = CLASSNAME_QUERIES.get(classname)
-                if q:
-                    attr_row = await conn.fetchrow(q, feature_id)
-                    attr_snapshot.update(dict(attr_row))
-                await insert_version(conn, gmlid, next_ver, "attr_update", attr_snapshot)
+                attr_snapshot = await _get_feature_attr_snapshot(conn, gmlid, classname, feature_id)
+                if attr_snapshot != before_snapshot:
+                    next_ver = await archive_and_next_version(conn, gmlid)
+                    await insert_version(conn, gmlid, next_ver, "attr_update", attr_snapshot)
 
             return await _get_feature_data(conn, gmlid)
     except HTTPException:
