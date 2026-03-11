@@ -25,6 +25,8 @@
 - スキーマ接頭辞: `citydb.`（例: `citydb.building`, `citydb.land_use`）
 - `building.function` はすべてNULL — 必ず `building.usage` を使用
 - **丁目・町名（例: 「松が谷二丁目」「西浅草一丁目」）で建物を絞り込む場合は、`address` テーブルを使わず、必ず `census_boundaries` + `ST_Within(building_footprints.geometry, cb.geometry)` を使用すること**
+- メートル単位の距離計算には `::geography` キャストを使用（例: `ST_Distance(a::geography, b::geography)`）。`building_footprints.geometry` と `shelter_facilities.geometry` は両方EPSG:4326なのでST_Transformは不要
+- 半径クエリには `ST_DWithin(a::geography, b::geography, metres)` を使用（引数はメートル）
 
 ## 結果解釈のルール
 
@@ -75,6 +77,21 @@
 - `geometry` geometry(MultiPolygon, 4326): 境界ポリゴン（EPSG:4326）
 - 約108行、台東区全域を丁目単位でカバー
 - **空間結合**: `ST_Within(bf.geometry, cb.geometry)` — building_footprints と census_boundaries は両方 EPSG:4326
+
+### citydb.shelter_facilities — 避難施設（ポイント）
+- `id` serial: 主キー
+- `name` varchar(200): 施設名
+- `address` varchar(300): 住所
+- `level` integer: **1=広域避難場所, 2=避難場所, 3=避難所**
+- `capacity` integer: 収容人数（人）
+- `disaster_types` varchar(500): 対象とする災害の分類
+- `facility_type` varchar(200): 施設の種類
+- `facility_area` numeric(12,2): 施設規模（m²）
+- `district` varchar(200): 行政区域
+- `height` numeric(8,2): 高さ（m）
+- `geometry` geometry(Point, 4326): 位置（EPSG:4326）
+- 44施設（台東区2023年）
+- メートル単位の距離: `::geography` キャストを使用 — `ST_Distance(a::geography, b::geography)`
 
 ### citydb.building_footprints — 建物フットプリントビュー（EPSG:4326）
 - `gmlid`, `measured_height`, `usage`, `storeys_above_ground`, `geometry`
@@ -145,3 +162,18 @@ SQL: SELECT cb.moji, COUNT(bf.gmlid) AS building_count FROM citydb.census_bounda
 
 Q: 浅草一丁目の商業施設の数
 SQL: SELECT COUNT(*) FROM citydb.building_footprints bf JOIN citydb.census_boundaries cb ON ST_Within(bf.geometry, cb.geometry) WHERE cb.moji = '浅草一丁目' AND bf.usage = '402'
+
+Q: 避難施設を一覧にして
+SQL: SELECT id, name, address, level, capacity, facility_type FROM citydb.shelter_facilities ORDER BY level, name LIMIT 100
+
+Q: レベル3の避難所は何か所？
+SQL: SELECT COUNT(*) AS cnt FROM citydb.shelter_facilities WHERE level = 3
+
+Q: 避難施設から最も遠い建物は？
+SQL: SELECT bf.gmlid, bf.usage, bf.measured_height, ROUND(nn.dist_m::numeric,1) AS nearest_shelter_m FROM citydb.building_footprints bf CROSS JOIN LATERAL (SELECT ST_Distance(bf.geometry::geography, s.geometry::geography) AS dist_m FROM citydb.shelter_facilities s ORDER BY s.geometry::geography <-> bf.geometry::geography LIMIT 1) nn WHERE bf.measured_height > 0 ORDER BY nn.dist_m DESC LIMIT 20
+
+Q: 500m以内に避難施設がない建物数は？
+SQL: SELECT COUNT(*) AS cnt FROM citydb.building_footprints bf WHERE NOT EXISTS (SELECT 1 FROM citydb.shelter_facilities s WHERE ST_DWithin(bf.geometry::geography, s.geometry::geography, 500))
+
+Q: 各避難施設の周辺300m以内の建物数
+SQL: SELECT s.name, s.level, COUNT(bf.gmlid) AS building_count FROM citydb.shelter_facilities s LEFT JOIN citydb.building_footprints bf ON ST_DWithin(s.geometry::geography, bf.geometry::geography, 300) GROUP BY s.id, s.name, s.level ORDER BY building_count DESC

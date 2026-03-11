@@ -90,6 +90,18 @@ The import script uses Python inside the backend container — no GDAL/ogr2ogr r
 **Download URL:** https://www.e-stat.go.jp/gis/statmap-search?page=1&type=2&aggregateUnitForBoundary=A&toukeiCode=00200521&toukeiYear=2020&serveyId=A002005212020&coordsys=1&format=GML&datum=2011
 → 東京都 → 台東区 (13106) → ダウンロード → unzip → `r2ka13106.gml`
 
+### Import shelter facility data (避難施設)
+
+```bash
+# Downloads GeoJSON from PLATEAU CDN (no local file needed):
+./data/import/import-shelters.sh
+
+# Or use a local file:
+./data/import/import-shelters.sh data/shelters/13106_tokyo23ku-taito-ku_pref_2023_shelter.geojson
+```
+
+This creates `citydb.shelter_facilities` (44 rows, Point geometry, EPSG:4326) and restarts Martin.
+
 ## LLM Mode vs Placeholder Mode
 
 The backend has two modes controlled by `ANTHROPIC_API_KEY` in `.env`:
@@ -125,6 +137,8 @@ browser
 | `backend/app/services/sql_generator.py` | Two-mode SQL generator: Claude API or keyword placeholder |
 | `backend/app/services/schema_context.py` | Loads `system_prompt.md` for LLM context |
 | `backend/app/prompts/system_prompt.md` | Schema description, codelists, SQL rules given to Claude |
+| `backend/app/api/areas.py` | Census boundary endpoints: list, search, stats, buildings |
+| `backend/app/api/shelters.py` | Shelter facility endpoints: list, coverage, detail, nearest-buildings |
 
 ## Database Schema
 
@@ -143,6 +157,8 @@ Key tables:
 - `citydb.city_furniture` — Street furniture: poles, signs, lights (7,193 objects)
 - `citydb.plant_cover` — Vegetation areas (238 PlantCover); SolitaryVegetationObject (10,191) in cityobject
 - `citydb.relief_feature` / `citydb.tin_relief` — DEM elevation TIN (18 tiles)
+- `citydb.census_boundaries` — 2020 census 小地域 boundaries (~108 rows, MultiPolygon, EPSG:4326); `key_code`, `moji` (丁目 name)
+- `citydb.shelter_facilities` — 避難施設 (44 shelters, Point, EPSG:4326); `level` 1=広域避難場所/2=避難場所/3=避難所, `capacity`, `disaster_types`
 - `citydb.cityobject_genericattrib` — Key-value store for overflow attributes; PLATEAU `uro:` ADE attributes would land here (currently empty — ADE was dropped during import)
 
 Coordinate system: **EPSG:6668** (JGD2011 geographic 2D, lon/lat degrees). Use this SRID in PostGIS functions.

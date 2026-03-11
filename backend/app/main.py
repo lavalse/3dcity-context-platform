@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import query, health, buildings, buildings_write, features, chat, export, versions, areas
+from app.api import query, health, buildings, buildings_write, features, chat, export, versions, areas, shelters
 from app.database import get_pool, close_pool
 
 
@@ -36,3 +36,4 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(versions.router, prefix="/api")
 app.include_router(areas.router, prefix="/api")
+app.include_router(shelters.router, prefix="/api")
