@@ -76,6 +76,20 @@ docker compose restart martin  # Restart Martin to discover new views
 
 This creates 4 materialized views: `building_footprints`, `land_use_footprints`, `road_footprints`, `flood_zone_footprints`. **Required for the map to display buildings and other layers.**
 
+### Import census boundary data (小地域)
+
+Download the 2020 census GML for 台東区 from e-stat.go.jp and place the `.gml` file under `data/census/`, then run:
+
+```bash
+./data/import/import-census.sh data/census/r2ka13106.gml
+```
+
+This creates `citydb.census_boundaries` (~108 rows, one per 丁目) and restarts Martin.
+The import script uses Python inside the backend container — no GDAL/ogr2ogr required.
+
+**Download URL:** https://www.e-stat.go.jp/gis/statmap-search?page=1&type=2&aggregateUnitForBoundary=A&toukeiCode=00200521&toukeiYear=2020&serveyId=A002005212020&coordsys=1&format=GML&datum=2011
+→ 東京都 → 台東区 (13106) → ダウンロード → unzip → `r2ka13106.gml`
+
 ## LLM Mode vs Placeholder Mode
 
 The backend has two modes controlled by `ANTHROPIC_API_KEY` in `.env`:

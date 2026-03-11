@@ -24,6 +24,7 @@
 - 集計クエリ以外はデフォルト `LIMIT 100`
 - スキーマ接頭辞: `citydb.`（例: `citydb.building`, `citydb.land_use`）
 - `building.function` はすべてNULL — 必ず `building.usage` を使用
+- **丁目・町名（例: 「松が谷二丁目」「西浅草一丁目」）で建物を絞り込む場合は、`address` テーブルを使わず、必ず `census_boundaries` + `ST_Within(building_footprints.geometry, cb.geometry)` を使用すること**
 
 ## 結果解釈のルール
 
@@ -68,9 +69,23 @@
 - objectclass_id = 9
 - 洪水区域と建物の空間クエリ: `EXISTS` + `cityobject.envelope &&` を使用
 
+### citydb.census_boundaries — 2020年国勢調査 小地域（丁目境界ポリゴン）
+- `key_code` varchar(20): 固有コード（例: '13106001001'）
+- `moji` varchar(40): **日本語地域名**（例: '上野一丁目', '松が谷二丁目', '西浅草一丁目'）
+- `geometry` geometry(MultiPolygon, 4326): 境界ポリゴン（EPSG:4326）
+- 約108行、台東区全域を丁目単位でカバー
+- **空間結合**: `ST_Within(bf.geometry, cb.geometry)` — building_footprints と census_boundaries は両方 EPSG:4326
+
+### citydb.building_footprints — 建物フットプリントビュー（EPSG:4326）
+- `gmlid`, `measured_height`, `usage`, `storeys_above_ground`, `geometry`
+- 丁目・地域内の建物クエリに使用（census_boundaries と ST_Within で結合）
+
 ### citydb.address / citydb.address_to_building — 住所
 - JOIN: `address_to_building ab ON ab.building_id = b.id`、`address a ON a.id = ab.address_id`
 - カラム: `street`, `house_number`, `city`
+- **⚠️ 重要: `street` はこのデータセットで全行NULL。`house_number` も全行NULL。**
+- `city` に完全住所が入っているが収録数が少なく不完全（例: `東京都台東区秋葉原` のみ）
+- **丁目・地域名での建物絞り込みには `address` テーブルを使わないこと — `census_boundaries` + `ST_Within` を使うこと**
 
 ## 建物用途コードリスト (building.usage)
 - '401' = 業務施設（オフィス・事務所）
@@ -115,3 +130,18 @@ SQL: SELECT b.usage, COUNT(*) AS cnt FROM citydb.building b WHERE b.building_roo
 
 Q: 道路の用途コード別の件数
 SQL: SELECT tc.function, COUNT(*) FROM citydb.transportation_complex tc WHERE tc.objectclass_id = 45 GROUP BY tc.function ORDER BY count DESC
+
+Q: 上野一丁目の建物数は？
+SQL: SELECT COUNT(*) AS cnt FROM citydb.building_footprints bf JOIN citydb.census_boundaries cb ON ST_Within(bf.geometry, cb.geometry) WHERE cb.moji = '上野一丁目'
+
+Q: 松が谷二丁目の建物を一覧にして
+SQL: SELECT bf.gmlid, bf.measured_height, bf.usage, bf.storeys_above_ground FROM citydb.building_footprints bf JOIN citydb.census_boundaries cb ON ST_Within(bf.geometry, cb.geometry) WHERE cb.moji = '松が谷二丁目' ORDER BY bf.measured_height DESC LIMIT 100
+
+Q: 西浅草一丁目の建物
+SQL: SELECT bf.gmlid, bf.measured_height, bf.usage, bf.storeys_above_ground FROM citydb.building_footprints bf JOIN citydb.census_boundaries cb ON ST_Within(bf.geometry, cb.geometry) WHERE cb.moji = '西浅草一丁目' ORDER BY bf.measured_height DESC LIMIT 100
+
+Q: 各丁目の建物数ランキング（上位20）
+SQL: SELECT cb.moji, COUNT(bf.gmlid) AS building_count FROM citydb.census_boundaries cb LEFT JOIN citydb.building_footprints bf ON ST_Within(bf.geometry, cb.geometry) GROUP BY cb.key_code, cb.moji ORDER BY building_count DESC LIMIT 20
+
+Q: 浅草一丁目の商業施設の数
+SQL: SELECT COUNT(*) FROM citydb.building_footprints bf JOIN citydb.census_boundaries cb ON ST_Within(bf.geometry, cb.geometry) WHERE cb.moji = '浅草一丁目' AND bf.usage = '402'
