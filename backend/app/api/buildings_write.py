@@ -89,6 +89,28 @@ async def _get_building_row(gmlid: str):
     return row
 
 
+async def _get_building_version_snapshot(conn, building_id: int) -> dict:
+    row = await conn.fetchrow(
+        """
+        SELECT co.name, b.measured_height, b.storeys_above_ground, b.usage, b.class,
+               b.lod1_solid_id, b.lod2_solid_id
+        FROM citydb.building b
+        JOIN citydb.cityobject co ON co.id = b.id
+        WHERE b.id = $1
+        """,
+        building_id,
+    )
+    return {
+        "name": row["name"],
+        "measured_height": row["measured_height"],
+        "storeys_above_ground": row["storeys_above_ground"],
+        "usage": row["usage"],
+        "class": row["class"],
+        "has_lod1": row["lod1_solid_id"] is not None,
+        "has_lod2": row["lod2_solid_id"] is not None,
+    }
+
+
 def _build_lod1_faces(coordinates: list, height: float) -> list[str]:
     """
     Compute WKT POLYGON Z strings for LOD1 solid faces (ground, roof, walls).
@@ -163,9 +185,13 @@ async def patch_building(gmlid: str, body: BuildingPatch):
 
     try:
         async with pool.acquire() as conn:
+            requested_fields = body.model_fields_set
+            if not requested_fields:
+                from app.api.buildings import get_building_detail
+                return await get_building_detail(gmlid)
+
             async with conn.transaction():
-                # Version: archive current, get next version number
-                next_ver = await archive_and_next_version(conn, gmlid)
+                before_snapshot = await _get_building_version_snapshot(conn, building_id)
 
                 # Update cityobject.name if provided
                 if body.name is not None:
@@ -211,19 +237,10 @@ async def patch_building(gmlid: str, body: BuildingPatch):
                     )
 
                 # Read updated attrs for snapshot
-                b_row = await conn.fetchrow(
-                    "SELECT measured_height, storeys_above_ground, usage, class, "
-                    "lod1_solid_id, lod2_solid_id FROM citydb.building WHERE id = $1",
-                    building_id,
-                )
-                await insert_version(conn, gmlid, next_ver, "attr_update", {
-                    "measured_height":      b_row["measured_height"],
-                    "storeys_above_ground": b_row["storeys_above_ground"],
-                    "usage":                b_row["usage"],
-                    "class":                b_row["class"],
-                    "has_lod1":             b_row["lod1_solid_id"] is not None,
-                    "has_lod2":             b_row["lod2_solid_id"] is not None,
-                })
+                snapshot = await _get_building_version_snapshot(conn, building_id)
+                if snapshot != before_snapshot:
+                    next_ver = await archive_and_next_version(conn, gmlid)
+                    await insert_version(conn, gmlid, next_ver, "attr_update", snapshot)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
