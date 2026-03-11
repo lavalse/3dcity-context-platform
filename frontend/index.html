@@ -399,6 +399,16 @@
       margin-left: auto; background: #e2e8f0;
     }
     .layer-toggle.on { background: #1a3a5c; }
+    .layer-group-divider {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
 
     /* Legend panel */
     #legend-panel {
@@ -898,13 +908,15 @@ const API = '/api';
 
 // ── Layer configuration ──
 const MAP_LAYERS = [
-  { id: 'buildings',     label: '建物',     label_en: 'Buildings',   color: '#FF9800', visible: true,  sourceLayer: 'building_footprints',   clickable: 'building' },
-  { id: 'land-use',      label: '土地利用', label_en: 'Land Use',    color: '#F4A261', visible: false, sourceLayer: 'land_use_footprints',   clickable: 'feature'  },
-  { id: 'roads',         label: '道路',     label_en: 'Roads',       color: '#78909C', visible: false, sourceLayer: 'road_footprints',       clickable: 'feature'  },
-  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: false, sourceLayer: 'flood_zone_footprints', clickable: 'feature'  },
-  { id: 'bridges',       label: '橋梁',     label_en: 'Bridges',        color: '#795548', visible: false, sourceLayer: 'bridge_footprints',    clickable: 'feature'  },
-  { id: 'furniture',     label: '都市設備', label_en: 'City Furniture', color: '#E91E63', visible: false, sourceLayer: 'furniture_footprints', clickable: 'feature'  },
-  { id: 'vegetation',    label: '植生',     label_en: 'Vegetation',     color: '#4CAF50', visible: false, sourceLayer: 'vegetation_footprints', clickable: 'feature' },
+  { id: 'buildings',     label: '建物',     label_en: 'Buildings',   color: '#FF9800', visible: true,  sourceLayer: 'building_footprints',   clickable: 'building', group: 'plateau' },
+  { id: 'land-use',      label: '土地利用', label_en: 'Land Use',    color: '#F4A261', visible: false, sourceLayer: 'land_use_footprints',   clickable: 'feature',  group: 'plateau' },
+  { id: 'roads',         label: '道路',     label_en: 'Roads',       color: '#78909C', visible: false, sourceLayer: 'road_footprints',       clickable: 'feature',  group: 'plateau' },
+  { id: 'flood-zones',   label: '浸水区域', label_en: 'Flood Zones', color: '#1565C0', visible: false, sourceLayer: 'flood_zone_footprints', clickable: 'feature',  group: 'plateau' },
+  { id: 'bridges',       label: '橋梁',     label_en: 'Bridges',        color: '#795548', visible: false, sourceLayer: 'bridge_footprints',    clickable: 'feature', group: 'plateau' },
+  { id: 'furniture',     label: '都市設備', label_en: 'City Furniture', color: '#E91E63', visible: false, sourceLayer: 'furniture_footprints', clickable: 'feature', group: 'plateau' },
+  { id: 'vegetation',    label: '植生',     label_en: 'Vegetation',     color: '#4CAF50', visible: false, sourceLayer: 'vegetation_footprints', clickable: 'feature', group: 'plateau' },
+  { id: 'census-areas', label: '小地域',   label_en: 'Census Areas',   color: '#673AB7', visible: false, sourceLayer: 'census_boundaries', group: 'external' },
+  { id: 'shelters',     label: '避難施設', label_en: 'Shelters',       color: '#F44336', visible: false, sourceLayer: 'shelter_facilities', group: 'external' },
 ];
 
 // ── Land use class colors & labels (Common_landUseType v3.2) ──
@@ -1229,6 +1241,9 @@ let cesiumCtrlHeld = false;
 window.addEventListener('keydown', e => { if (e.key === 'Control') cesiumCtrlHeld = true; });
 window.addEventListener('keyup',   e => { if (e.key === 'Control') cesiumCtrlHeld = false; });
 
+// Census area selection state
+let censusAreaSelection = null;   // key_code of currently selected census area, or null
+
 // Selection state for non-building overlay layers
 const otherSel = { 'land-use': null, 'roads': null, 'flood-zones': null, 'bridges': null, 'furniture': null, 'vegetation': null };
 const otherHov = { 'land-use': null, 'roads': null, 'flood-zones': null, 'bridges': null, 'furniture': null, 'vegetation': null };
@@ -1441,6 +1456,113 @@ function initMap() {
       'source-layer': 'vegetation_footprints',
       layout: { visibility: 'none' },
       paint: { 'line-color': '#1B5E20', 'line-width': 1 },
+    });
+
+    // Census boundaries layer (off by default)
+    map.addSource('census-areas', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/census_boundaries/{z}/{x}/{y}'],
+      minzoom: 10, maxzoom: 16,
+    });
+    map.addLayer({
+      id: 'census-areas-fill', type: 'fill', source: 'census-areas',
+      'source-layer': 'census_boundaries',
+      layout: { visibility: 'none' },
+      paint: { 'fill-color': '#673AB7', 'fill-opacity': 0.08 },
+    });
+    map.addLayer({
+      id: 'census-areas-outline', type: 'line', source: 'census-areas',
+      'source-layer': 'census_boundaries',
+      layout: { visibility: 'none' },
+      paint: { 'line-color': '#673AB7', 'line-width': 1.5, 'line-dasharray': [4, 2] },
+    });
+    map.addLayer({
+      id: 'census-areas-label', type: 'symbol', source: 'census-areas',
+      'source-layer': 'census_boundaries',
+      minzoom: 13,
+      layout: {
+        visibility: 'none',
+        'text-field': ['get', 'moji'],
+        'text-size': 11,
+        'text-font': ['Noto Sans CJK JP Regular', 'Open Sans Regular', 'Arial Unicode MS Regular'],
+        'text-anchor': 'center',
+        'text-max-width': 6,
+      },
+      paint: {
+        'text-color': '#4A148C',
+        'text-halo-color': 'rgba(255,255,255,0.8)',
+        'text-halo-width': 1.5,
+      },
+    });
+
+    // Census area selection highlight layers
+    map.addLayer({
+      id: 'census-areas-selected-fill', type: 'fill', source: 'census-areas',
+      'source-layer': 'census_boundaries',
+      filter: ['==', 'key_code', ''],
+      paint: { 'fill-color': '#673AB7', 'fill-opacity': 0.3 },
+    });
+    map.addLayer({
+      id: 'census-areas-selected-outline', type: 'line', source: 'census-areas',
+      'source-layer': 'census_boundaries',
+      filter: ['==', 'key_code', ''],
+      paint: { 'line-color': '#673AB7', 'line-width': 2.5 },
+    });
+
+    // Shelter facilities layer (off by default)
+    map.addSource('shelters', {
+      type: 'vector',
+      tiles: [window.location.origin + '/tiles/shelter_facilities/{z}/{x}/{y}'],
+      minzoom: 8, maxzoom: 16,
+    });
+    map.addLayer({
+      id: 'shelters-circle', type: 'circle', source: 'shelters',
+      'source-layer': 'shelter_facilities',
+      layout: { visibility: 'none' },
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 14, 10, 16, 14],
+        'circle-color': [
+          'match', ['get', 'level'],
+          1, '#B71C1C',
+          2, '#F57C00',
+          3, '#2E7D32',
+          '#F44336',
+        ],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1.5,
+        'circle-opacity': 0.85,
+      },
+    });
+    map.addLayer({
+      id: 'shelters-label', type: 'symbol', source: 'shelters',
+      'source-layer': 'shelter_facilities',
+      minzoom: 14,
+      layout: {
+        visibility: 'none',
+        'text-field': ['get', 'name'],
+        'text-size': 11,
+        'text-font': ['Noto Sans CJK JP Regular', 'Open Sans Regular', 'Arial Unicode MS Regular'],
+        'text-anchor': 'top',
+        'text-offset': [0, 1.2],
+        'text-max-width': 8,
+      },
+      paint: {
+        'text-color': '#B71C1C',
+        'text-halo-color': 'rgba(255,255,255,0.9)',
+        'text-halo-width': 1.5,
+      },
+    });
+    // Shelter hover highlight layer (always rendered, filtered to selected id)
+    map.addLayer({
+      id: 'shelters-hover', type: 'circle', source: 'shelters',
+      'source-layer': 'shelter_facilities',
+      filter: ['==', 'id', -1],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 14, 14, 16, 18],
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-color': '#FF6D00',
+        'circle-stroke-width': 3,
+      },
     });
 
     // Selected + hover highlight layers for non-building overlay layers
@@ -1722,11 +1844,82 @@ function initMap() {
       });
     });
 
+    // Census area click handler
+    map.on('click', 'census-areas-fill', async e => {
+      if (selection.mode !== 'normal') return;
+      const props = e.features[0].properties;
+      const keyCode = props.key_code;
+      const moji    = props.moji || keyCode;
+
+      // Clear other selections
+      applySelection([]);
+      clearExportSelection();
+      censusAreaSelection = keyCode;
+      map.setFilter('census-areas-selected-fill',    ['==', 'key_code', keyCode]);
+      map.setFilter('census-areas-selected-outline', ['==', 'key_code', keyCode]);
+
+      // Show panel immediately with spinner for stats
+      document.getElementById('detail-header').textContent = `${moji} / 小地域`;
+      document.getElementById('detail-body').innerHTML = renderCensusAreaShell(moji, keyCode);
+
+      // Load stats async
+      try {
+        const res = await fetch(`${API}/areas/${keyCode}/stats`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const stats = await res.json();
+        document.getElementById('census-stats-placeholder').innerHTML =
+          renderCensusStats(stats);
+      } catch(err) {
+        document.getElementById('census-stats-placeholder').innerHTML =
+          `<div class="error-card">統計取得エラー: ${escHtml(err.message)}</div>`;
+      }
+
+      refreshExportButton();
+    });
+
+    map.on('mouseenter', 'census-areas-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'census-areas-fill', () => { map.getCanvas().style.cursor = ''; });
+
+    // Shelter click handler
+    let selectedShelterId = null;
+    map.on('click', 'shelters-circle', async e => {
+      if (selection.mode !== 'normal') return;
+      const props = e.features[0].properties;
+      const shelterId = props.id;
+      const shelterName = props.name || `避難施設 ${shelterId}`;
+
+      // Clear other selections
+      applySelection([]);
+      clearExportSelection();
+      selectedShelterId = shelterId;
+      map.setFilter('shelters-hover', ['==', 'id', shelterId]);
+
+      // Show panel with spinner
+      document.getElementById('detail-header').textContent = `${shelterName} / 避難施設`;
+      document.getElementById('detail-body').innerHTML = renderShelterShell(props);
+
+      // Load nearest buildings async
+      try {
+        const res = await fetch(`${API}/shelters/${shelterId}/nearest-buildings?limit=20`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        document.getElementById('shelter-buildings-placeholder').innerHTML =
+          renderShelterNearestBuildings(data.buildings);
+      } catch(err) {
+        document.getElementById('shelter-buildings-placeholder').innerHTML =
+          `<div class="error-card">建物取得エラー: ${escHtml(err.message)}</div>`;
+      }
+
+      refreshExportButton();
+    });
+    map.on('mouseenter', 'shelters-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'shelters-circle', () => { map.getCanvas().style.cursor = ''; });
+
     // Click on empty space clears non-building highlights
     map.on('click', e => {
       if (selection.mode !== 'normal') return;
       const hit = map.queryRenderedFeatures(e.point, {
-        layers: ['buildings-fill', 'land-use-fill', 'roads-fill', 'flood-zones-fill', 'bridges-fill', 'furniture-fill', 'vegetation-fill'],
+        layers: ['buildings-fill', 'land-use-fill', 'roads-fill', 'flood-zones-fill', 'bridges-fill', 'furniture-fill', 'vegetation-fill', 'census-areas-fill', 'shelters-circle'],
       });
       if (hit.length === 0) {
         Object.keys(otherSel).forEach(key => {
@@ -1734,6 +1927,14 @@ function initMap() {
           map.setFilter(`${key}-selected`, ['==', 'gmlid', '']);
           map.setFilter(`${key}-selected-fill`, ['==', 'gmlid', '']);
         });
+        censusAreaSelection = null;
+        if (map.getLayer('census-areas-selected-fill'))
+          map.setFilter('census-areas-selected-fill', ['==', 'key_code', '']);
+        if (map.getLayer('census-areas-selected-outline'))
+          map.setFilter('census-areas-selected-outline', ['==', 'key_code', '']);
+        selectedShelterId = null;
+        if (map.getLayer('shelters-hover'))
+          map.setFilter('shelters-hover', ['==', 'id', -1]);
         clearExportSelection();
         refreshExportButton();
       }
@@ -2895,7 +3096,16 @@ function cancelPolygonDraw() {
 // ── Layer panel ──
 function buildLayerPanel() {
   const panel = document.getElementById('layer-panel');
+  let lastGroup = null;
   MAP_LAYERS.forEach(layer => {
+    if (layer.group !== lastGroup && lastGroup !== null) {
+      const divider = document.createElement('div');
+      divider.className = 'layer-group-divider';
+      divider.textContent = layer.group === 'external' ? '外部データ / External' : 'PLATEAUデータ / PLATEAU';
+      panel.appendChild(divider);
+    }
+    lastGroup = layer.group;
+
     const row = document.createElement('div');
     row.className = 'layer-row';
     row.innerHTML = `
@@ -2914,7 +3124,7 @@ function toggleLayer(layerId) {
   const cfg = MAP_LAYERS.find(l => l.id === layerId);
   cfg.visible = !cfg.visible;
   const vis = cfg.visible ? 'visible' : 'none';
-  [`${layerId}-fill`, `${layerId}-outline`].forEach(id => {
+  [`${layerId}-fill`, `${layerId}-outline`, `${layerId}-label`, `${layerId}-circle`].forEach(id => {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
   });
   document.getElementById(`toggle-${layerId}`)
@@ -3046,12 +3256,138 @@ function renderFeaturePanel(data) {
   loadVersionHistory(data.gmlid, 'detail-body', 'detail-header', 'features');
 }
 
+// ── Census area panel ──
+
+function renderCensusAreaShell(moji, keyCode) {
+  return `
+    <div class="section-title">地域情報</div>
+    <div class="attr-row"><span class="attr-label">地域名</span><span class="attr-value">${escHtml(moji)}</span></div>
+    <div class="attr-row"><span class="attr-label">KEY CODE</span><span class="attr-value">${escHtml(keyCode)}</span></div>
+
+    <div id="census-stats-placeholder">
+      <div class="spinner" style="margin-top:16px">統計を読込中…</div>
+    </div>
+
+    <div class="section-title" style="margin-top:16px">ダウンロード</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button onclick="downloadCensusGeoJSON('${escHtml(keyCode)}')"
+        style="flex:1;padding:7px;background:#673AB7;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem">
+        ⬇ 境界 GeoJSON
+      </button>
+      <button onclick="downloadCensusBuildings('${escHtml(keyCode)}')"
+        style="flex:1;padding:7px;background:#FF9800;color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem">
+        ⬇ 建物 GeoJSON
+      </button>
+    </div>
+  `;
+}
+
+function renderCensusStats(stats) {
+  const usageRows = (stats.building_usage_breakdown || [])
+    .map(u => `<div class="attr-row">
+      <span class="attr-label">${escHtml(USAGE_LABELS[u.usage] || u.usage)}</span>
+      <span class="attr-value">${u.count}棟</span>
+    </div>`).join('');
+
+  return `
+    <div class="section-title">建物統計</div>
+    <div class="attr-row"><span class="attr-label">建物数</span><span class="attr-value">${stats.counts.buildings}棟</span></div>
+    ${stats.avg_building_height_m != null
+      ? `<div class="attr-row"><span class="attr-label">平均高さ</span><span class="attr-value">${stats.avg_building_height_m} m</span></div>`
+      : ''}
+    ${usageRows ? `<div class="section-title">用途内訳</div>${usageRows}` : ''}
+    <div class="section-title">その他</div>
+    <div class="attr-row"><span class="attr-label">植生</span><span class="attr-value">${stats.counts.vegetation}件</span></div>
+    <div class="attr-row"><span class="attr-label">道路</span><span class="attr-value">${stats.counts.roads}件</span></div>
+  `;
+}
+
+async function downloadCensusGeoJSON(keyCode) {
+  try {
+    const res = await fetch(`${API}/areas/${keyCode}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const feature = {
+      type: 'Feature',
+      geometry: data.geometry,
+      properties: { key_code: data.key_code, moji: data.moji, city: data.city, s_area: data.s_area },
+    };
+    const blob = new Blob([JSON.stringify(feature, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${data.moji || keyCode}_boundary.geojson`;
+    a.click();
+  } catch(err) {
+    alert(`ダウンロードエラー: ${err.message}`);
+  }
+}
+
+function downloadCensusBuildings(keyCode) {
+  const a = document.createElement('a');
+  a.href = `${API}/areas/${keyCode}/buildings`;
+  a.download = '';
+  a.click();
+}
+
+// ── Shelter panel render functions ──
+
+const SHELTER_LEVEL_LABELS = { 1: '広域避難場所', 2: '避難場所', 3: '避難所' };
+
+function renderShelterShell(props) {
+  const level = props.level;
+  const levelLabel = SHELTER_LEVEL_LABELS[level] || `レベル${level}`;
+  const levelColors = { 1: '#B71C1C', 2: '#F57C00', 3: '#2E7D32' };
+  const color = levelColors[level] || '#F44336';
+
+  const rows = [
+    ['施設名',   props.name],
+    ['住所',     props.address],
+    ['レベル',   `<span style="color:${color};font-weight:600">${levelLabel}</span>`],
+    ['収容人数', props.capacity != null ? `${props.capacity}人` : null],
+    ['施設種類', props.facility_type],
+    ['施設規模', props.facility_area != null ? `${props.facility_area} m²` : null],
+    ['災害分類', props.disaster_types],
+    ['行政区域', props.district],
+  ].filter(([, v]) => v != null && v !== '');
+
+  const attrHtml = rows.map(([k, v]) =>
+    `<div class="attr-row"><span class="attr-label">${escHtml(k)}</span><span class="attr-value">${v.startsWith('<') ? v : escHtml(String(v))}</span></div>`
+  ).join('');
+
+  return `
+    <div class="section-title">施設情報</div>
+    ${attrHtml}
+    <div id="shelter-buildings-placeholder">
+      <div class="spinner" style="margin-top:16px">周辺建物を読込中…</div>
+    </div>
+  `;
+}
+
+function renderShelterNearestBuildings(buildings) {
+  if (!buildings || buildings.length === 0) {
+    return '<div class="section-title" style="margin-top:16px">周辺建物</div><p style="font-size:0.8rem;color:#888">データなし</p>';
+  }
+  const rows = buildings.map(b => {
+    const usageLabel = USAGE_LABELS[b.usage] || b.usage || '不明';
+    const heightStr = b.measured_height > 0 ? `${b.measured_height}m` : '—';
+    return `<div class="attr-row">
+      <span class="attr-label" style="font-size:0.75rem;max-width:130px;overflow:hidden;text-overflow:ellipsis">${escHtml(b.gmlid)}</span>
+      <span class="attr-value" style="font-size:0.75rem">${escHtml(usageLabel)} ${heightStr} <span style="color:#888">${b.dist_m}m</span></span>
+    </div>`;
+  }).join('');
+  return `<div class="section-title" style="margin-top:16px">周辺建物（近い順）</div>${rows}`;
+}
+
 // ── Export selection helpers ──
 
 function clearExportSelection() {
   Object.keys(otherSel).forEach(k => { otherSel[k] = null; });
   Object.keys(otherHov).forEach(k => { otherHov[k] = null; });
   exportSelection.clear();
+  censusAreaSelection = null;
+  try { map?.setFilter('census-areas-selected-fill',    ['==', 'key_code', '']); } catch(e) {}
+  try { map?.setFilter('census-areas-selected-outline', ['==', 'key_code', '']); } catch(e) {}
+  try { map?.setFilter('shelters-hover', ['==', 'id', -1]); } catch(e) {}
   ['land-use', 'roads', 'flood-zones', 'bridges', 'furniture', 'vegetation'].forEach(key => {
     if (!map) return;
     try { map.setFilter(`${key}-selected`,      ['==', 'gmlid', '']); } catch(e) {}

@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schema xmlns:fme="http://www.safe.com/gml/fme" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:gml="http://www.opengis.net/gml" xmlns="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.safe.com/gml/fme" elementFormDefault="qualified">
+<import namespace="http://www.opengis.net/gml" schemaLocation="http://schemas.opengis.net/gml/3.1.1/base/gml.xsd"/>
+<element name="r2ka13106" type="fme:r2ka13106Type" substitutionGroup="gml:_Feature"/>
+<complexType name="r2ka13106Type">
+<complexContent>
+<extension base="gml:AbstractFeatureType">
+<sequence>
+<element name="KEY_CODE" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="PREF" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="CITY" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="S_AREA" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="PREF_NAME" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="CITY_NAME" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="S_NAME" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KIGO_E" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="HCODE" minOccurs="0" type="int"/>
+<element name="AREA" minOccurs="0" type="double"/>
+<element name="PERIMETER" minOccurs="0" type="double"/>
+<element name="R2KAxx" minOccurs="0" type="int"/>
+<element name="R2KAxx_ID" minOccurs="0" type="int"/>
+<element name="KIHON1" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="DUMMY1" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KIHON2" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KEYCODE1" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KEYCODE2" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="AREA_MAX_F" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KIGO_D" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="N_KEN" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="N_CITY" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KIGO_I" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element name="KBSUM" minOccurs="0" type="int"/>
+<element name="JINKO" minOccurs="0" type="int"/>
+<element name="SETAI" minOccurs="0" type="int"/>
+<element name="X_CODE" minOccurs="0" type="double"/>
+<element name="Y_CODE" minOccurs="0" type="double"/>
+<element name="KCODE1" minOccurs="0">
+<simpleType>
+<restriction base="string">
+<maxLength value="256"/>
+</restriction>
+</simpleType>
+</element>
+<element ref="gml:surfaceProperty" minOccurs="0"/>
+<element ref="gml:multiSurfaceProperty" minOccurs="0"/>
+</sequence>
+</extension>
+</complexContent>
+</complexType>
+</schema>
