@@ -11,9 +11,10 @@ Prototype NL-to-SQL application for Tokyo Taito-ku (台東区) city staff to que
 ### Start / Stop
 
 ```bash
-docker compose up -d                        # Start all services
+docker compose up -d                        # Start all services (including cloudflared tunnel)
 docker compose up -d --force-recreate backend  # Restart backend (e.g. after .env change)
 docker compose logs -f backend              # Stream backend logs
+docker compose logs cloudflared             # Check tunnel connection status
 docker compose down                         # Stop all (data preserved)
 docker compose down -v                      # Stop and delete volumes
 ```
@@ -102,6 +103,30 @@ The import script uses Python inside the backend container — no GDAL/ogr2ogr r
 
 This creates `citydb.shelter_facilities` (44 rows, Point geometry, EPSG:4326) and restarts Martin.
 
+## External Access (Cloudflare Tunnel + Basic Auth)
+
+The app is publicly accessible at `https://3dcity.kashiwanews.cc` via Cloudflare Tunnel.
+
+- **Cloudflare Tunnel**: the `cloudflared` container establishes an outbound tunnel to Cloudflare — no inbound ports need to be opened on the host. HTTPS is terminated at the Cloudflare edge automatically.
+- **Basic Auth**: nginx requires username/password for all routes (frontend, API, tiles). Credentials are stored in `infra/nginx/.htpasswd` (not committed to git).
+- **Security**: only the web frontend is exposed. Database (5432) and pgAdmin (5050) are not accessible from the internet.
+
+### Setup (first time)
+
+1. Generate `.htpasswd`: `htpasswd -cb infra/nginx/.htpasswd <user> <pass>`
+2. Create a Cloudflare Tunnel at https://one.dash.cloudflare.com → Networks → Tunnels
+3. Add Public Hostname route: `<subdomain>.<domain>` → HTTP → `frontend:80`
+4. Set `CLOUDFLARE_TUNNEL_TOKEN=<token>` in `.env`
+5. `docker compose up -d --force-recreate frontend cloudflared`
+
+### Restart after shutdown
+
+```bash
+docker compose up -d   # starts all services including cloudflared; tunnel reconnects automatically
+```
+
+No extra steps needed — the tunnel token in `.env` and `.htpasswd` persist across restarts.
+
 ## LLM Mode vs Placeholder Mode
 
 The backend has two modes controlled by `ANTHROPIC_API_KEY` in `.env`:
@@ -116,11 +141,14 @@ To switch: set `ANTHROPIC_API_KEY=sk-ant-...` in `.env`, then `docker compose up
 ## Architecture
 
 ```
-browser
-  └── nginx :3000  (serves frontend/index.html, proxies /api/*)
-        └── FastAPI :8000
-              ├── Anthropic Claude API  (NL → SQL, only when key set)
-              └── asyncpg → PostgreSQL :5432  (3DCityDB v4 schema)
+internet → https://3dcity.kashiwanews.cc (Cloudflare edge, auto HTTPS)
+  └── cloudflared container (outbound tunnel, no inbound ports needed)
+        └── nginx :80  (Basic Auth → serves frontend, proxies /api/*, /tiles/*)
+              └── FastAPI :8000
+                    ├── Anthropic Claude API  (NL → SQL, only when key set)
+                    └── asyncpg → PostgreSQL :5432  (3DCityDB v4 schema)
+
+localhost :3000 → nginx (same frontend, for local dev)
 ```
 
 **Key design decision: 3DCityDB v4, not v5.** PLATEAU data is CityGML 2.0. v4 maps features to explicit readable columns (`measured_height`, `storeys_above_ground`, `usage`). v5's generic `PROPERTY` table would make LLM-generated SQL much harder to produce correctly.

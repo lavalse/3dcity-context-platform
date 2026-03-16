@@ -39,6 +39,9 @@ pgdata/
 *.dump
 *.sql.gz
 
+# Nginx credentials
+infra/nginx/.htpasswd
+
 # Logs
 *.log
 logs/

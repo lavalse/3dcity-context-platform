@@ -90,8 +90,22 @@ services:
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/.htpasswd:/etc/nginx/conf.d/.htpasswd:ro
     depends_on:
       - backend
+
+  # ------------------------------------------------------------------
+  # Cloudflare Tunnel: exposes frontend to the internet via outbound tunnel
+  # ------------------------------------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: 3dcity-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
 
 volumes:
   pgdata:
